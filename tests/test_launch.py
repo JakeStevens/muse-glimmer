@@ -241,6 +241,7 @@ def test_launch_waits_for_server_and_preserves_muse_exit_code(run_launch, tmp_pa
         assert server["settings"]["context"] == 4096
         assert server["settings"]["concurrency"] == 2
         assert server["api_dialect"] == "openrouter"
+        assert server["evict_idle_sessions"] is True
 
 
 @pytest.mark.parametrize(

@@ -145,4 +145,6 @@ if __name__ == "__main__":
             Settings.model_validate_json(sys.argv[2]),
             listener,
             api_dialect="openrouter",
+            # Muse creates reminder sessions that can outlive their turns.
+            evict_idle_sessions=True,
         )
