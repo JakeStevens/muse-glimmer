@@ -1,6 +1,4 @@
-# Release: bump pyproject.toml and push the matching v<version> tag.
-# Start the local runner with `python packaging/release_runner.py RUN_ID`,
-# then approve the pypi deployment after reviewing the build summary.
+# Release guide: .github/RELEASING.md
 # PyPI Trusted Publisher: mergennachin / muse-glimmer / wheel.yml / pypi.
 # Runner: Apple Silicon Mac with Git, Xcode/Metal and gh installed.
 name: Build and release wheel

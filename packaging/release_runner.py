@@ -1,13 +1,11 @@
 """Run one GitHub release on this Mac, then remove the temporary runner.
 
 Requires Python 3.11+, Git, Xcode with Metal, and an authenticated gh CLI.
-For a release, bump pyproject.toml, commit, and push the matching v<version> tag.
-Get its run ID with `gh run list --workflow wheel.yml`, then run:
+See .github/RELEASING.md for setup, release steps, and retries.
 
     python packaging/release_runner.py RUN_ID
 
 Approve the pypi deployment in GitHub when prompted. Ctrl+C cancels the run.
-For a build-only check, first use `gh workflow run wheel.yml --ref main`.
 """
 
 from __future__ import annotations
