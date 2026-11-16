@@ -147,7 +147,10 @@ jobs:
         run: |
           uv pip install pypi-attestations==0.0.31
           python -m pypi_attestations sign "dist/$WHEEL_FILENAME"
-          uv publish --trusted-publishing always "dist/$WHEEL_FILENAME"
+          python -m pypi_attestations verify attestation \
+            --identity "$GITHUB_SERVER_URL/$GITHUB_WORKFLOW_REF" "dist/$WHEEL_FILENAME"
+          uv publish --trusted-publishing always \
+            "dist/$WHEEL_FILENAME" "dist/$WHEEL_FILENAME.publish.attestation"
 
   verify-pypi:
     needs: [build, publish]
@@ -183,3 +186,8 @@ jobs:
           python packaging/check_wheel.py --install "dist/$WHEEL_FILENAME"
           printf 'Verified muse-glimmer %s from PyPI: checksum and binary-only installation passed.\n' \
             "$RELEASE_VERSION" >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify PyPI provenance
+        run: |
+          uv pip install pypi-attestations==0.0.31
+          python -m pypi_attestations verify pypi \
+            --repository "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "dist/$WHEEL_FILENAME"
