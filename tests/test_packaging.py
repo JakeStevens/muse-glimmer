@@ -65,7 +65,8 @@ def test_installed_package_uses_its_own_shared_resources(tmp_path, mode):
         metadata = Parser().parsestr(archive.read(metadata_name).decode())
         description = metadata.get_payload()
         assert "pip install --pre muse-glimmer" in description
-        assert "pip install -e ." not in description
+        assert "pip install -e ." in description
+        assert wheel.name.endswith("-py3-none-macosx_14_0_arm64.whl")
         source_url = f"https://github.com/mergennachin/muse-glimmer/tree/v{metadata['Version']}"
         assert f"Source, {source_url}" in metadata.get_all("Project-URL")
         assert f"/blob/v{metadata['Version']}/default_config.toml" in description

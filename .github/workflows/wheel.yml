@@ -1,0 +1,184 @@
+# Release: bump pyproject.toml, push the matching v<version> tag, then approve
+# the pypi deployment after reviewing the build summary.
+# PyPI Trusted Publisher: mergennachin / muse-glimmer / wheel.yml / pypi.
+name: Build and release wheel
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - ".github/workflows/wheel.yml"
+      - ".gitmodules"
+      - "build_backend/**"
+      - "packaging/**"
+      - "python/**"
+      - "tokenizer/**"
+      - "default_config.toml"
+      - "models.yaml"
+      - "pyproject.toml"
+      - "setup.py"
+      - "MANIFEST.in"
+      - "LICENSE"
+      - "README.md"
+      - "third-party/executorch"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wheel-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    outputs:
+      version: ${{ steps.summary.outputs.version }}
+      filename: ${{ steps.summary.outputs.filename }}
+      sha256: ${{ steps.summary.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      - name: Check release version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          python - <<'PY'
+          import os, tomllib
+          from pathlib import Path
+          version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+          assert os.environ["GITHUB_REF_NAME"] == f"v{version}", "Tag and package version differ"
+          PY
+      - name: Build wheel
+        run: |
+          test "$(uname -m)" = arm64
+          python -m pip install build
+          python -m build --wheel
+      - name: Summarize release artifact
+        id: summary
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, tomllib
+          from pathlib import Path
+          wheels = list(Path("dist").glob("*.whl"))
+          assert len(wheels) == 1, f"Expected one wheel, found {wheels}"
+          wheel = wheels[0]
+          version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+          digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+          provenance = json.loads(Path("python/src/muse_glimmer/_vendor/provenance.json").read_text())
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"version={version}\nfilename={wheel.name}\nsha256={digest}\n")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              summary.write(
+                  f"## muse-glimmer {version}\n\n"
+                  f"- Commit: `{os.environ['GITHUB_SHA']}`\n"
+                  f"- ExecuTorch: `{provenance['revision']}`\n"
+                  f"- Wheel: `{wheel.name}`\n"
+                  f"- Size: {wheel.stat().st_size:,} bytes\n"
+                  f"- SHA-256: `{digest}`\n"
+              )
+          PY
+      - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          subject-path: dist/*.whl
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: muse-glimmer-macos-arm64
+          path: dist/*.whl
+          if-no-files-found: error
+
+  test:
+    needs: build
+    runs-on: macos-15
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        python: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: muse-glimmer-macos-arm64
+          path: dist
+      - name: Verify binary-only installation
+        run: python packaging/check_wheel.py --install dist/*.whl
+
+  publish:
+    needs: [build, test]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: pypi
+      url: https://pypi.org/p/muse-glimmer
+    permissions:
+      contents: read
+      attestations: read
+      id-token: write
+    env:
+      WHEEL_FILENAME: ${{ needs.build.outputs.filename }}
+      WHEEL_SHA256: ${{ needs.build.outputs.sha256 }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: muse-glimmer-macos-arm64
+          path: dist
+      - name: Verify the tested artifact and its source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          printf '%s  %s\n' "$WHEEL_SHA256" "dist/$WHEEL_FILENAME" | sha256sum --check
+          gh attestation verify "dist/$WHEEL_FILENAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/wheel.yml" \
+            --source-digest "$GITHUB_SHA" \
+            --source-ref "$GITHUB_REF"
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
+        with:
+          packages-dir: dist
+          attestations: true
+
+  verify-pypi:
+    needs: [build, publish]
+    runs-on: macos-15
+    timeout-minutes: 15
+    env:
+      RELEASE_VERSION: ${{ needs.build.outputs.version }}
+      WHEEL_FILENAME: ${{ needs.build.outputs.filename }}
+      WHEEL_SHA256: ${{ needs.build.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      - name: Download the published version
+        # Allow time for the new file to appear on PyPI's index.
+        run: |
+          for attempt in {1..12}; do
+            python -m pip download --index-url https://pypi.org/simple \
+              --only-binary=:all: --no-deps --no-cache-dir --timeout 15 --retries 0 \
+              --dest dist "muse-glimmer==$RELEASE_VERSION" && break
+            test "$attempt" -lt 12
+            sleep 10
+          done
+      - name: Verify published bytes and installation
+        run: |
+          printf '%s  %s\n' "$WHEEL_SHA256" "dist/$WHEEL_FILENAME" | shasum -a 256 --check
+          python packaging/check_wheel.py --install "dist/$WHEEL_FILENAME"
+          printf 'Verified muse-glimmer %s from PyPI: checksum and binary-only installation passed.\n' \
+            "$RELEASE_VERSION" >> "$GITHUB_STEP_SUMMARY"

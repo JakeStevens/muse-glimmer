@@ -289,7 +289,7 @@ def test_latest_pull_replaces_default(hub, catalog):
 def test_explicit_model_overrides_pulled_default(hub, catalog, tmp_path, monkeypatch, source, kind):
     files(hub, "model.pte")
     downloaded = download.pull("2.0")
-    hub.state.write_text(download.PulledModel(path=downloaded, dflash=True).model_dump_json())
+    hub.state.write_text(download.PulledModel(path=downloaded, dflash=False).model_dump_json())
     selected = tmp_path / "local.pte"
     selected.write_bytes(b"local")
     path = selected if kind == "file" else selected.parent
@@ -304,7 +304,7 @@ def test_explicit_model_overrides_pulled_default(hub, catalog, tmp_path, monkeyp
     monkeypatch.setattr(runtime, "serve", serve)
     assert main(args) == 0
     assert serve.call_args.args[0] == selected
-    assert serve.call_args.args[1].dflash is False
+    assert serve.call_args.args[1].dflash is True
     assert download.default_model().path == downloaded
 
 

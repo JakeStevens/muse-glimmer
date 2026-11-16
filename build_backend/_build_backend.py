@@ -21,7 +21,10 @@ def _compile(*, editable=False):
 
 def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
     _compile()
-    return _setuptools.build_wheel(wheel_directory, config_settings, metadata_directory)
+    name = _setuptools.build_wheel(wheel_directory, config_settings, metadata_directory)
+    check = runpy.run_path(str(Path(__file__).resolve().parents[1] / "packaging/check_wheel.py"))
+    check["check_wheel"](Path(wheel_directory) / name)
+    return name
 
 
 def build_editable(wheel_directory, config_settings=None, metadata_directory=None):

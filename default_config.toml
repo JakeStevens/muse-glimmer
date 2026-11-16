@@ -27,9 +27,9 @@ prefix_cache_entries = 8
 # use fewer cache entries for long conversations.
 prefix_checkpoint_prompt_end = "every"
 
-# Pulled variants select DFlash automatically. For a local DFlash export, enable
-# this setting or pass --dflash. --no-dflash explicitly disables it.
-dflash = false
+# DFlash is enabled by default. Pulled variants select their matching mode.
+# For a local solo export, disable it with --no-dflash or dflash = false.
+dflash = true
 
 # Draft proposals per step, used only with DFlash. 0 uses the exported maximum.
 dflash_n_draft = 3

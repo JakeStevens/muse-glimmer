@@ -102,9 +102,15 @@ def _stage(source: Path, worker_dir: Path, package: Path, *, editable: bool) -> 
         "extension/llm/tokenizers/third-party/re2",
         "extension/llm/tokenizers/third-party/pcre2",
     ]
-    stb = worker_dir.parents[2] / "_deps/stb-src"
-    for directory in [*(source / relative for relative in license_roots), stb]:
-        relative = str(directory.relative_to(source)) if directory.is_relative_to(source) else "stb"
+    build = worker_dir.parents[2]
+    stb = build / "_deps/stb-src"
+    fmt = build / "executorch/backends/mlx/mlx/_deps/fmt-src"
+    for directory in [*(source / relative for relative in license_roots), stb, fmt]:
+        relative = (
+            str(directory.relative_to(source))
+            if directory.is_relative_to(source)
+            else directory.name.removesuffix("-src")
+        )
         paths = (
             sorted(
                 p

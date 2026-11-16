@@ -1,7 +1,6 @@
 """Tag wheels containing an executable as platform-specific, without a Python ABI."""
 
 import json
-import platform
 import runpy
 import shutil
 import tomllib
@@ -82,18 +81,17 @@ class MacWheel(bdist_wheel):
         self.root_is_pure = False
 
     def get_tag(self):
-        minimum = platform.mac_ver()[0].split(".")[0]
-        return "py3", "none", f"macosx_{minimum}_0_arm64"
+        minimum = metadata["tool"]["muse-glimmer"]["macos-deployment-target"].replace(".", "_")
+        return "py3", "none", f"macosx_{minimum}_arm64"
 
 
 root = Path(__file__).parent
-version = tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"]
+metadata = tomllib.loads((root / "pyproject.toml").read_text())
+version = metadata["project"]["version"]
 repository = "https://github.com/mergennachin/muse-glimmer"
 source_url = f"{repository}/tree/v{version}"
-# Keep the repository README focused on source installs; PyPI uses the package.
+# Use the same installation instructions on GitHub and PyPI.
 readme = (root / "README.md").read_text()
-readme = readme.replace(" From this repository:", "")
-readme = readme.replace("pip install -e .", "pip install --pre muse-glimmer")
 readme = readme.replace(
     "(default_config.toml)", f"({repository}/blob/v{version}/default_config.toml)"
 )

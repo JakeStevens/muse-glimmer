@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -49,7 +50,9 @@ def main(*, editable: bool = False) -> None:
     revision = acquisition["source_metadata"]()["revision"]
     local_changes = acquisition["local_source_hash"](source) if editable else ""
     source_id = f"{revision}-{local_changes}" if local_changes else revision
-    minimum = platform.mac_ver()[0].split(".")[0] + ".0"
+    minimum = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["muse-glimmer"][
+        "macos-deployment-target"
+    ]
     key = hashlib.sha256(
         f"clean-worker:{source}:{source_id}:{minimum}:{sys.version_info[:2]}".encode()
     ).hexdigest()[:16]

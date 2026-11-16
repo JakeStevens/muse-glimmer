@@ -72,6 +72,7 @@ def test_explicit_file_still_works_in_directory_with_multiple_models(tmp_path, m
     monkeypatch.setattr(runtime, "serve", serve)
     assert main(["serve", "--model", str(selected)]) == 0
     assert serve.call_args.args[0] == selected
+    assert serve.call_args.args[1].dflash is True
 
 
 def test_no_dflash_overrides_enabled_config(tmp_path, monkeypatch):

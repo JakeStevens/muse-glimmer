@@ -83,7 +83,7 @@ def serve(
     evict_idle_sessions: bool = False,
 ) -> None:
     if not (native_dir() / "muse_glimmer_batching_worker").is_file():
-        raise ValueError("Native runtime missing. Reinstall muse-glimmer to build it.")
+        raise ValueError("Native runtime missing. Reinstall muse-glimmer.")
     import uvicorn
 
     from ._vendor.muse import serve_batching as serving

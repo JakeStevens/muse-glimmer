@@ -5,7 +5,7 @@ backend-path = ["build_backend"]
 
 [project]
 name = "muse-glimmer"
-version = "0.1.0.dev3"
+version = "0.1.0.dev4"
 description = "Serve Muse Glimmer locally"
 dynamic = ["readme", "urls"]
 license = "Apache-2.0"
@@ -30,6 +30,9 @@ dev = ["pytest>=8,<10", "build>=1.2,<2", "setuptools>=77", "wheel>=0.45", "ruff>
 
 [project.scripts]
 muse-glimmer = "muse_glimmer.cli:main"
+
+[tool.muse-glimmer]
+macos-deployment-target = "14.0"
 
 [tool.setuptools.packages.find]
 where = ["python/src"]

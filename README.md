@@ -4,56 +4,56 @@ Serve [Muse Glimmer 30B](https://ai.meta.com/research/publications/muse-glimmer-
 
 ## Supported platforms
 
-- macOS on Apple silicon
+- macOS 14+ on Apple silicon
 
-## Install and serve
+## Install
 
-### Environment Setup
-  
-Clone the repository from GitHub.
+Use an existing Python 3.11+ environment, or create one with **Conda**:
 
-  ```bash
-  git clone --recursive https://github.com/mergennachin/muse-glimmer.git 
-  cd muse-glimmer
-  ```
+```sh
+conda create -yn glimmer python=3.12
+conda activate glimmer
+```
 
-Create a conda environment
+Or with [uv](https://docs.astral.sh/uv/getting-started/installation/):
 
-  ```bash
-  conda create -yn glimmer python=3.12
-  conda activate glimmer
-  ```
-  
-Alternatively, create a virtual environment with uv:
-
-```bash
+```sh
 uv venv --python 3.12 --seed .venv
 source .venv/bin/activate
 ```
 
-You will need Python 3.11+, Git, and Xcode with the Metal toolchain.
-Since Xcode 26 the Metal toolchain is a separate download. After installing or updating Xcode, run once:
+### From PyPI
+
+```sh
+pip install --pre muse-glimmer
+```
+
+### From source
+
+Requires Git and Xcode. After installing or updating Xcode, set up the Metal toolchain:
 
 ```sh
 sudo xcodebuild -license accept
 xcodebuild -downloadComponent MetalToolchain
 ```
 
-The first installation needs an internet connection. From this repository:
+```sh
+git clone --recursive https://github.com/mergennachin/muse-glimmer.git
+cd muse-glimmer
+pip install -e .
+```
 
-### Install Setup
+## Serve
 
 ```sh
-pip install -e .
 muse-glimmer pull 1.0
 muse-glimmer serve
 ```
 
-Use `pull 1.0 --variant <folder-name>` to choose a checkpoint,
+Use `pull 1.0 --variant <folder-name>` to choose a specific folder,
 or `serve --model <path>` for a local model.
 
-The server runs at `http://127.0.0.1:8000`. Press **Ctrl+C** to stop.
-The terminal shows a live HUD.
+The server runs at `http://127.0.0.1:8000` with a live terminal HUD. **Ctrl+C** stops it.
 
 ## Run Muse (coding agent) with the local model
 
@@ -63,9 +63,7 @@ With [Muse](https://dev.meta.ai/products/muse-code) installed, run this from you
 muse-glimmer serve --launch muse
 ```
 
-
-Muse uses the local model through its OpenRouter provider. No API key is needed.
-Exiting Muse also stops the server.
+No API key is needed. Exiting Muse stops the server.
 
 <img src="img/muse-code-demo.png" alt="Muse coding agent building a Pomodoro timer with Muse Glimmer" width="600">
 
@@ -78,8 +76,8 @@ uv tool install --python 3.12 open-webui==0.13.3
 muse-glimmer serve --launch open-webui
 ```
 
-Your browser opens at `http://127.0.0.1:8080` with Muse Glimmer selected. No login is needed.
-Chat history is saved locally. The HUD stays in the terminal; **Ctrl+C** stops both servers.
+Your browser opens at `http://127.0.0.1:8080`. No login is needed; chats are saved locally.
+**Ctrl+C** stops both servers.
 
 <img src="img/open-webui-demo.png" alt="Chatting with Muse Glimmer in Open WebUI" width="600">
 
@@ -107,8 +105,7 @@ Requests appear under `demo` in the HUD; change `session_id` for another session
 
 ## Configuration
 
-[default_config.toml](default_config.toml) documents all settings and defaults.
-To override them, pass a TOML file explicitly:
+[default_config.toml](default_config.toml) documents all settings. Load overrides with:
 
 ```sh
 muse-glimmer serve --config ./config.toml
