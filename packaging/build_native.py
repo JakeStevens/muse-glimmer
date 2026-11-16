@@ -56,7 +56,11 @@ def main(*, editable: bool = False) -> None:
     key = hashlib.sha256(
         f"clean-worker:{source}:{source_id}:{minimum}:{sys.version_info[:2]}".encode()
     ).hexdigest()[:16]
-    build = Path.home() / "Library/Caches/muse-glimmer/build" / key
+    # A temporary release runner supplies its own cache directory for cleanup.
+    cache = os.environ.get(
+        "MUSE_GLIMMER_BUILD_CACHE", Path.home() / "Library/Caches/muse-glimmer/build"
+    )
+    build = Path(cache).expanduser() / key
     build.mkdir(parents=True, exist_ok=True)
     jobs = os.environ.get("CMAKE_BUILD_PARALLEL_LEVEL", str(os.cpu_count() or 1))
     if not jobs.isdigit() or int(jobs) < 1:

@@ -1,5 +1,6 @@
-# Release: bump pyproject.toml, push the matching v<version> tag, then approve
-# the pypi deployment after reviewing the build summary.
+# Release: bump pyproject.toml and push the matching v<version> tag.
+# Start the local runner with `python packaging/release_runner.py RUN_ID`,
+# then approve the pypi deployment after reviewing the build summary.
 # PyPI Trusted Publisher: mergennachin / muse-glimmer / wheel.yml / pypi.
 # Runner: Apple Silicon Mac with Git, Xcode/Metal and gh installed.
 name: Build and release wheel
@@ -18,7 +19,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: [self-hosted, macOS, ARM64, muse-glimmer-release]
+    runs-on: [self-hosted, macOS, ARM64, "muse-glimmer-${{ github.run_id }}"]
     timeout-minutes: 60
     permissions:
       contents: read
@@ -86,7 +87,7 @@ jobs:
 
   test:
     needs: build
-    runs-on: [self-hosted, macOS, ARM64, muse-glimmer-release]
+    runs-on: [self-hosted, macOS, ARM64, "muse-glimmer-${{ github.run_id }}"]
     timeout-minutes: 15
     strategy:
       matrix:
@@ -109,7 +110,7 @@ jobs:
   publish:
     needs: [build, test]
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: [self-hosted, macOS, ARM64, muse-glimmer-release]
+    runs-on: [self-hosted, macOS, ARM64, "muse-glimmer-${{ github.run_id }}"]
     timeout-minutes: 15
     environment:
       name: pypi
@@ -154,7 +155,7 @@ jobs:
 
   verify-pypi:
     needs: [build, publish]
-    runs-on: [self-hosted, macOS, ARM64, muse-glimmer-release]
+    runs-on: [self-hosted, macOS, ARM64, "muse-glimmer-${{ github.run_id }}"]
     timeout-minutes: 15
     env:
       RELEASE_VERSION: ${{ needs.build.outputs.version }}
