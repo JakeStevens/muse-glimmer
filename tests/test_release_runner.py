@@ -26,7 +26,7 @@ def test_runner_cleanup(tmp_path, monkeypatch, outcome):
     archive = tmp_path / "runner.tar.gz"
     with tarfile.open(archive, "w:gz") as bundle:
         for name, contents in {
-            "config.sh": "#!/bin/sh\nprintf '{\"agentId\":42}' > .runner\n",
+            "config.sh": "#!/bin/sh\nprintf '\ufeff{\"agentId\":42}' > .runner\n",
             "run.sh": "#!/bin/sh\nexec sleep 60\n",
         }.items():
             info = tarfile.TarInfo(name)

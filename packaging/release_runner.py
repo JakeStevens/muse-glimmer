@@ -169,7 +169,7 @@ def run(run_id: int) -> int:
                 raise RuntimeError(
                     (configured.stdout + configured.stderr).replace(token, "[redacted]")
                 )
-            runner_id = json.loads((runner / ".runner").read_text())["agentId"]
+            runner_id = json.loads((runner / ".runner").read_text(encoding="utf-8-sig"))["agentId"]
             with (work / "runner.log").open("w") as log:
                 process = subprocess.Popen(
                     ["./run.sh"],
