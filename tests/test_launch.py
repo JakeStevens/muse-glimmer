@@ -88,12 +88,15 @@ from pathlib import Path
 root = Path(os.environ["LAUNCH_TEST_ROOT"])
 def interrupt(*args): (root / "interrupted").touch()
 signal.signal(signal.SIGINT, interrupt)
-url = os.environ["OPENROUTER_BASE_URL"]
+client = os.environ["LAUNCH_CLIENT"]
+config = json.loads(os.environ["MUSE_GLIMMER_PI_MODEL"]) if client == "pi" else None
+url = config["baseUrl"] if config else os.environ["OPENROUTER_BASE_URL"]
 with urllib.request.urlopen(url.removesuffix("/v1") + "/health", timeout=2) as response:
     assert response.status == 200
-(root / "muse.json").write_text(json.dumps({
+(root / f"{client}.json").write_text(json.dumps({
     "pid": os.getpid(), "args": sys.argv[1:], "cwd": os.getcwd(),
     "url": url, "key": os.environ["OPENROUTER_API_KEY"],
+    "config": config,
 }))
 if os.environ["LAUNCH_TEST_MODE"] == "exit":
     raise SystemExit(7)
@@ -101,6 +104,7 @@ while not (root / "release").exists(): time.sleep(0.02)
 """
     )
     binary.chmod(0o755)
+    (tmp_path / "pi").symlink_to(binary)
     webui = tmp_path / "open-webui"
     webui.write_text(
         f"#!{sys.executable}\n"
@@ -139,6 +143,10 @@ HTTPServer(("127.0.0.1", int(sys.argv[-1])), Handler).serve_forever()
     muse_config = tmp_path / "muse-config/muse/settings.json"
     muse_config.parent.mkdir(parents=True)
     muse_config.write_text('{"model":"my-usual-model"}')
+    pi_config = tmp_path / "pi-agent"
+    pi_config.mkdir()
+    for name in ("settings.json", "models.json"):
+        (pi_config / name).write_text("{}")
     source = str(Path(launch.__file__).parents[1])
 
     @contextmanager
@@ -160,6 +168,7 @@ HTTPServer(("127.0.0.1", int(sys.argv[-1])), Handler).serve_forever()
             LAUNCH_WEBUI_PORT=str(webui_port),
             WEBUI_SECRET_KEY="unrelated-key",
             XDG_CONFIG_HOME=str(muse_config.parent.parent),
+            PI_CODING_AGENT_DIR=str(tmp_path / "pi-agent"),
             OPENROUTER_API_KEY="existing-cloud-key",
             OPENROUTER_BASE_URL="https://example.invalid",
         )
@@ -199,6 +208,8 @@ HTTPServer(("127.0.0.1", int(sys.argv[-1])), Handler).serve_forever()
                 proc.kill()
                 proc.communicate()
             assert muse_config.read_text() == '{"model":"my-usual-model"}'
+            for name in ("settings.json", "models.json"):
+                assert (pi_config / name).read_text() == "{}"
             assert env["OPENROUTER_API_KEY"] == "existing-cloud-key"
             state = tmp_path / "server.json"
             if state.exists():
@@ -209,7 +220,7 @@ HTTPServer(("127.0.0.1", int(sys.argv[-1])), Handler).serve_forever()
                     # Do not leave a test worker running if cleanup regresses.
                     if alive(server["pid"]) or alive(server["worker"]):
                         os.killpg(server["pid"], signal.SIGKILL)
-            state = tmp_path / "muse.json"
+            state = tmp_path / f"{client}.json"
             if state.exists():
                 assert not alive(json.loads(state.read_text())["pid"])
             state = tmp_path / "webui.json"
@@ -220,27 +231,47 @@ HTTPServer(("127.0.0.1", int(sys.argv[-1])), Handler).serve_forever()
 
 
 @pytest.mark.parametrize("host", ["127.0.0.1", "0.0.0.0"])
-def test_launch_waits_for_server_and_preserves_muse_exit_code(run_launch, tmp_path, host):
-    with run_launch(host=host) as (proc, url):
+@pytest.mark.parametrize("client", ["muse", "pi"])
+def test_launch_waits_for_server_and_preserves_exit_code(run_launch, tmp_path, host, client):
+    with run_launch(host=host, client=client) as (proc, url):
         _, err = proc.communicate(timeout=10)
         assert proc.returncode == 7, err
-        muse = json.loads((tmp_path / "muse.json").read_text())
+        muse = json.loads((tmp_path / f"{client}.json").read_text())
         assert muse["url"] == url
-        assert muse["key"] == "muse-glimmer"
-        assert muse["args"] == [
-            "--provider",
-            "openrouter",
-            "--model",
-            "muse-glimmer-30B",
-            "--base-url",
-            url,
-        ]
+        if client == "pi":
+            extension = tmp_path / "pi-agent/extensions/muse-glimmer.js"
+            assert extension.is_symlink()
+            assert extension.resolve() == Path(launch.__file__).with_name("pi.mjs").resolve()
+            assert muse["key"] == "existing-cloud-key"
+            assert muse["config"] == {
+                "baseUrl": url,
+                "id": "muse-glimmer-30B",
+                "contextWindow": 4096,
+            }
+            assert muse["args"] == [
+                "--extension",
+                str(tmp_path / "pi-agent/extensions/muse-glimmer.js"),
+                "--provider",
+                "muse-glimmer",
+                "--model",
+                "muse-glimmer-30B",
+            ]
+        else:
+            assert muse["key"] == "muse-glimmer"
+            assert muse["args"] == [
+                "--provider",
+                "openrouter",
+                "--model",
+                "muse-glimmer-30B",
+                "--base-url",
+                url,
+            ]
         assert Path(muse["cwd"]).samefile(tmp_path)
         server = json.loads((tmp_path / "server.json").read_text())
         assert server["model"] == str(tmp_path / "model.pte")
         assert server["settings"]["context"] == 4096
         assert server["settings"]["concurrency"] == 2
-        assert server["api_dialect"] == "openrouter"
+        assert server["api_dialect"] == ("openrouter" if client == "muse" else "openai")
         assert server["evict_idle_sessions"] is True
 
 
@@ -252,29 +283,32 @@ def test_launch_waits_for_server_and_preserves_muse_exit_code(run_launch, tmp_pa
         ("crash", "Server exited while Muse was running"),
     ],
 )
-def test_server_failure_cleans_up_processes(run_launch, tmp_path, mode, message):
-    with run_launch(mode=mode) as (proc, _):
+@pytest.mark.parametrize("client", ["muse", "pi"])
+def test_server_failure_cleans_up_processes(run_launch, tmp_path, mode, message, client):
+    with run_launch(mode=mode, client=client) as (proc, _):
         _, err = proc.communicate(timeout=10)
         assert proc.returncode == 1
-        assert message in err
-        assert (tmp_path / "muse.json").exists() == (mode == "crash")
+        assert message.replace("Muse", "Pi" if client == "pi" else "Muse") in err
+        assert (tmp_path / f"{client}.json").exists() == (mode == "crash")
 
 
-def test_occupied_port_does_not_launch_muse_or_touch_existing_server(run_launch, tmp_path):
+@pytest.mark.parametrize("client", ["muse", "pi"])
+def test_occupied_port_does_not_launch_or_touch_existing_server(run_launch, tmp_path, client):
     with socket.create_server(("127.0.0.1", 0)) as listener:
-        with run_launch(port=listener.getsockname()[1]) as (proc, _):
+        with run_launch(port=listener.getsockname()[1], client=client) as (proc, _):
             _, err = proc.communicate(timeout=5)
             assert proc.returncode == 1
             assert "Address already in use" in err
-            assert not (tmp_path / "muse.json").exists()
+            assert not (tmp_path / f"{client}.json").exists()
             assert not (tmp_path / "server.json").exists()
             assert listener.getsockname()[1] > 0
 
 
 @pytest.mark.parametrize("sig", [signal.SIGINT, signal.SIGTERM])
-def test_terminal_signals_and_cleanup(run_launch, tmp_path, sig):
-    with run_launch(mode="wait") as (proc, _):
-        wait_for(lambda: (tmp_path / "muse.json").exists())
+@pytest.mark.parametrize("client", ["muse", "pi"])
+def test_terminal_signals_and_cleanup(run_launch, tmp_path, sig, client):
+    with run_launch(mode="wait", client=client) as (proc, _):
+        wait_for(lambda: (tmp_path / f"{client}.json").exists())
         os.killpg(proc.pid, sig)
         if sig == signal.SIGINT:
             wait_for(lambda: (tmp_path / "interrupted").exists())
@@ -286,10 +320,44 @@ def test_terminal_signals_and_cleanup(run_launch, tmp_path, sig):
         assert proc.returncode == (0 if sig == signal.SIGINT else 143), err
 
 
-def test_missing_muse_fails_before_server_start(monkeypatch):
+@pytest.mark.parametrize(
+    "client, message",
+    [
+        ("muse", "Muse is not installed"),
+        ("pi", "npm install -g @earendil-works/pi-coding-agent"),
+    ],
+)
+def test_missing_agent_fails_before_server_start(monkeypatch, client, message):
     monkeypatch.setattr(launch.shutil, "which", lambda _: None)
-    with pytest.raises(ValueError, match="Muse is not installed"):
-        launch.launch_muse(Path("unused.pte"), load_settings({}))
+    with pytest.raises(ValueError, match=message):
+        launch.launch_agent(Path("unused.pte"), load_settings({}), client)
+
+
+def test_pi_registration_updates_a_previous_installation(tmp_path, monkeypatch):
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(tmp_path))
+    extension = tmp_path / "extensions/muse-glimmer.js"
+    extension.parent.mkdir()
+    extension.symlink_to(tmp_path / "removed-environment/muse_glimmer/pi.mjs")
+    assert launch._register_pi_extension() == extension
+    assert extension.resolve() == Path(launch.__file__).with_name("pi.mjs").resolve()
+    assert launch._register_pi_extension() == extension
+
+
+@pytest.mark.parametrize("symlink", [False, True])
+def test_pi_registration_preserves_unrelated_extensions(tmp_path, monkeypatch, symlink):
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(tmp_path))
+    extension = tmp_path / "extensions/muse-glimmer.js"
+    extension.parent.mkdir()
+    original = tmp_path / "custom.js"
+    original.write_text("// user extension")
+    if symlink:
+        extension.symlink_to(original)
+    else:
+        extension.write_text(original.read_text())
+    with pytest.raises(ValueError, match="Pi (provider|extension)"):
+        launch._register_pi_extension()
+    assert extension.read_text() == "// user extension"
+    assert extension.is_symlink() == symlink
 
 
 @pytest.mark.parametrize("sig", [signal.SIGINT, signal.SIGTERM])

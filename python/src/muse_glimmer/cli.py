@@ -22,7 +22,9 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--config", type=Path)
     command.add_argument("--model", help="Local .pte file or directory containing one .pte")
     command.add_argument(
-        "--launch", choices=["muse", "open-webui"], help="Launch a client using the local server"
+        "--launch",
+        choices=["muse", "pi", "open-webui"],
+        help="Launch a client using the local server",
     )
     command.add_argument("--host")
     command.add_argument("--port", type=int)
@@ -73,10 +75,10 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
             flush=True,
         )
-        if args.launch == "muse":
-            from .launch import launch_muse
+        if args.launch in {"muse", "pi"}:
+            from .launch import launch_agent
 
-            return launch_muse(model, settings)
+            return launch_agent(model, settings, args.launch)
         if args.launch == "open-webui":
             from .webui import launch_open_webui
 

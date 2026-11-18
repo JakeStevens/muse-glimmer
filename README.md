@@ -67,6 +67,17 @@ No API key is needed. Exiting Muse stops the server.
 
 <img src="img/muse-code-demo.png" alt="Muse coding agent building a Pomodoro timer with Muse Glimmer" width="600">
 
+## Run Pi with the local model
+
+Install [Pi](https://github.com/earendil-works/pi) once, then launch from your project directory:
+
+```sh
+npm install -g @earendil-works/pi-coding-agent
+muse-glimmer serve --launch pi
+```
+
+No API key is needed. Exiting Pi stops the server.
+
 ## Chat with Open WebUI
 
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and [Open WebUI](https://openwebui.com/) once:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import signal
@@ -33,24 +34,54 @@ def _stop_server(server: subprocess.Popen) -> None:
     server.wait()
 
 
-def _stop_muse(muse: subprocess.Popen) -> None:
-    if muse.poll() is None:
-        muse.terminate()
+def _stop_agent(agent: subprocess.Popen) -> None:
+    if agent.poll() is None:
+        agent.terminate()
         try:
-            muse.wait(timeout=5)
+            agent.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            muse.kill()
-            muse.wait()
+            agent.kill()
+            agent.wait()
 
 
 def _terminate(signum, _frame):
     raise SystemExit(128 + signum)
 
 
-def launch_muse(model: Path, settings: Settings) -> int:
-    binary = shutil.which("muse") or shutil.which(str(Path.home() / ".local/bin/muse"))
+def _register_pi_extension() -> Path:
+    # Subagents start fresh Pi processes without the parent's --extension flag.
+    directory = Path(os.environ.get("PI_CODING_AGENT_DIR") or Path.home() / ".pi/agent")
+    extension = directory.expanduser().absolute() / "extensions/muse-glimmer.js"
+    source = Path(__file__).with_name("pi.mjs").resolve()
+    extension.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        extension.symlink_to(source)
+    except FileExistsError:
+        if not extension.is_symlink():
+            raise ValueError(f"Cannot register Pi provider: {extension} already exists.") from None
+        previous = extension.readlink()
+        if previous != source:
+            if previous.name != "pi.mjs" or previous.parent.name != "muse_glimmer":
+                raise ValueError(f"Cannot replace unrelated Pi extension: {extension}") from None
+            # Switch installations atomically; other Pi processes may be discovering extensions.
+            with tempfile.TemporaryDirectory(prefix=".muse-glimmer-", dir=extension.parent) as temp:
+                replacement = Path(temp) / "provider"
+                replacement.symlink_to(source)
+                replacement.replace(extension)
+    return extension
+
+
+def launch_agent(model: Path, settings: Settings, name: str) -> int:
+    label = {"muse": "Muse", "pi": "Pi"}[name]
+    binary = shutil.which(name) or shutil.which(str(Path.home() / ".local/bin" / name))
     if binary is None:
-        raise ValueError("Muse is not installed. Install Muse and make sure muse is on PATH.")
+        install = (
+            "npm install -g @earendil-works/pi-coding-agent"
+            if name == "pi"
+            else "Install Muse and make sure muse is on PATH."
+        )
+        raise ValueError(f"{label} is not installed. {install}")
+    pi_extension = _register_pi_extension() if name == "pi" else None
 
     host = {"0.0.0.0": "127.0.0.1", "::": "::1"}.get(settings.host, settings.host)
     host = f"[{host}]" if ":" in host else host
@@ -67,6 +98,7 @@ def launch_muse(model: Path, settings: Settings) -> int:
                     str(model),
                     settings.model_dump_json(),
                     str(listener.fileno()),
+                    "openrouter" if name == "muse" else "openai",
                 ],
                 pass_fds=(listener.fileno(),),
                 start_new_session=True,
@@ -75,7 +107,7 @@ def launch_muse(model: Path, settings: Settings) -> int:
                 stderr=log,
             )
             listener.close()
-            muse = None
+            agent = None
             old_int = signal.getsignal(signal.SIGINT)
             old_term = signal.signal(signal.SIGTERM, _terminate)
             try:
@@ -94,16 +126,12 @@ def launch_muse(model: Path, settings: Settings) -> int:
                             raise ValueError("Timed out waiting for the server to start.")
                         time.sleep(0.1)
 
-                env = dict(
-                    os.environ,
-                    OPENROUTER_API_KEY="muse-glimmer",
-                    OPENROUTER_BASE_URL=f"{origin}/v1",
-                )
-                print(f"Launching Muse using {origin}/v1", file=sys.stderr, flush=True)
-                # Muse owns Ctrl+C while interactive; keep its server alive for cancelled turns.
-                signal.signal(signal.SIGINT, lambda *_: None)
-                muse = subprocess.Popen(
-                    [
+                env = dict(os.environ)
+                if name == "muse":
+                    env.update(
+                        OPENROUTER_API_KEY="muse-glimmer", OPENROUTER_BASE_URL=f"{origin}/v1"
+                    )
+                    command = [
                         binary,
                         "--provider",
                         "openrouter",
@@ -111,14 +139,33 @@ def launch_muse(model: Path, settings: Settings) -> int:
                         MODEL_ID,
                         "--base-url",
                         f"{origin}/v1",
-                    ],
-                    env=env,
-                )
+                    ]
+                else:
+                    env["MUSE_GLIMMER_PI_MODEL"] = json.dumps(
+                        {
+                            "baseUrl": f"{origin}/v1",
+                            "id": MODEL_ID,
+                            "contextWindow": settings.context,
+                        }
+                    )
+                    command = [
+                        binary,
+                        "--extension",
+                        str(pi_extension),
+                        "--provider",
+                        "muse-glimmer",
+                        "--model",
+                        MODEL_ID,
+                    ]
+                print(f"Launching {label} using {origin}/v1", file=sys.stderr, flush=True)
+                # The agent owns Ctrl+C; keep its server alive for cancelled turns.
+                signal.signal(signal.SIGINT, lambda *_: None)
+                agent = subprocess.Popen(command, env=env)
                 while True:
                     if server.poll() is not None:
-                        raise ValueError("Server exited while Muse was running.")
+                        raise ValueError(f"Server exited while {label} was running.")
                     try:
-                        result = muse.wait(timeout=0.25)
+                        result = agent.wait(timeout=0.25)
                         return result if result >= 0 else 128 - result
                     except subprocess.TimeoutExpired:
                         pass
@@ -130,8 +177,8 @@ def launch_muse(model: Path, settings: Settings) -> int:
             finally:
                 signal.signal(signal.SIGINT, lambda *_: None)
                 try:
-                    if muse is not None:
-                        _stop_muse(muse)
+                    if agent is not None:
+                        _stop_agent(agent)
                     _stop_server(server)
                 finally:
                     signal.signal(signal.SIGINT, old_int)
@@ -144,7 +191,7 @@ if __name__ == "__main__":
             Path(sys.argv[1]),
             Settings.model_validate_json(sys.argv[2]),
             listener,
-            api_dialect="openrouter",
-            # Muse creates reminder sessions that can outlive their turns.
+            api_dialect=sys.argv[4],
+            # Agents may start new conversations without releasing old sessions.
             evict_idle_sessions=True,
         )
