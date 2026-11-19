@@ -53,6 +53,8 @@ muse-glimmer serve
 Use `pull 1.0 --variant <folder-name>` to choose a specific folder,
 or `serve --model <path>` for a local model.
 Use `pull 1.0 --force` to re-download a cached model.
+Use `pull --list` to see model versions and variants, or `pull --remove` to delete the default
+downloaded model. Other variants and shared data they still need are kept.
 
 The server runs at `http://127.0.0.1:8000` with a live terminal HUD. **Ctrl+C** stops it.
 

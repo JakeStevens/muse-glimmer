@@ -6,7 +6,7 @@ from pathlib import Path, PurePosixPath
 
 import httpx
 import yaml
-from huggingface_hub import HfApi, hf_hub_download
+from huggingface_hub import CacheNotFound, HfApi, hf_hub_download, scan_cache_dir
 from platformdirs import user_data_path
 from pydantic import BaseModel, ConfigDict, TypeAdapter
 
@@ -19,7 +19,7 @@ except ImportError:
     HubHTTPError = httpx.HTTPError
 
 
-class ReleaseSource(BaseModel):
+class ModelSource(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     repo_id: str
@@ -35,36 +35,40 @@ class PulledModel(BaseModel):
     dflash: bool = False
 
 
-class ModelRelease(BaseModel):
+class ModelVersion(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     default_variant: str
-    variants: dict[str, dict[str, ReleaseSource]]
+    variants: dict[str, dict[str, ModelSource]]
 
 
-def _release_source(version: str, variant: str | None = None) -> ReleaseSource:
+def _catalog() -> dict[str, ModelVersion]:
     try:
         contents = yaml.safe_load(resource_path("models.yaml").read_text())
     except yaml.YAMLError as error:
         raise ValueError(f"Invalid model catalog: {error}") from error
-    releases = TypeAdapter(dict[str, ModelRelease]).validate_python(contents)
-    if version not in releases:
+    return TypeAdapter(dict[str, ModelVersion]).validate_python(contents)
+
+
+def _model_source(version: str, variant: str | None = None) -> ModelSource:
+    versions = _catalog()
+    if version not in versions:
         raise ValueError(
-            f"Unknown release {version!r}. Available releases: {', '.join(sorted(releases))}."
+            f"Unknown model version {version!r}. Available model versions: {', '.join(sorted(versions))}."
         )
-    release = releases[version]
+    model = versions[version]
     if variant is None:
-        variant = release.default_variant
-    if variant not in release.variants:
+        variant = model.default_variant
+    if variant not in model.variants:
         raise ValueError(
-            f"Unknown variant {variant!r} for release {version!r}. "
-            f"Available variants: {', '.join(sorted(release.variants))}."
+            f"Unknown variant {variant!r} for model version {version!r}. "
+            f"Available variants: {', '.join(sorted(model.variants))}."
         )
-    sources = release.variants[variant]
+    sources = model.variants[variant]
     target = f"{platform.system().lower()}-{platform.machine().lower()}"
     if target not in sources:
         raise ValueError(
-            f"Release {version!r} variant {variant!r} is not supported on this platform ({target}). "
+            f"Model version {version!r} variant {variant!r} is not supported on this platform ({target}). "
             f"Supported platforms: {', '.join(sorted(sources))}."
         )
     return sources[target]
@@ -85,6 +89,64 @@ def default_model() -> PulledModel | None:
         return PulledModel.model_validate_json(value)
     # Existing installations stored only the model path.
     return PulledModel(path=Path(value))
+
+
+def list_models(version: str | None = None) -> None:
+    versions = _catalog()
+    if version is not None:
+        if version not in versions:
+            raise ValueError(
+                f"Unknown model version {version!r}. Available model versions: {', '.join(sorted(versions))}."
+            )
+        versions = {version: versions[version]}
+    target = f"{platform.system().lower()}-{platform.machine().lower()}"
+    print(f"Available models for {target}:")
+    available = False
+    for version, model in sorted(versions.items()):
+        variants = sorted(name for name, sources in model.variants.items() if target in sources)
+        if variants:
+            available = True
+            print(f"  {version}")
+            for name in variants:
+                print(f"    {name}{' [default]' if name == model.default_variant else ''}")
+    if not available:
+        print("  No models available for this platform.")
+
+
+def remove_default_model() -> None:
+    selected = default_model()
+    if selected is None:
+        raise ValueError("No default downloaded model to remove.")
+    # Resolve parent directories, but keep the snapshot entry rather than its blob.
+    model = selected.path.parent.resolve() / selected.path.name
+    snapshots = next(
+        (p for p in model.parents if p.name == "snapshots" and p.parent.name.startswith("models--")),
+        None,
+    )
+    if snapshots is None or model.suffix != ".pte":
+        raise ValueError("Default model is not in a Hugging Face model cache; no files were removed.")
+    if not snapshots.parent.exists():
+        default_model_file().unlink()
+        return
+    try:
+        cache = scan_cache_dir(snapshots.parent.parent)
+    except CacheNotFound as error:
+        raise ValueError("Model cache disappeared during removal; try again.") from error
+    repo = next((r for r in cache.repos if r.repo_path == snapshots.parent), None)
+    if repo is None:
+        raise ValueError("Cannot inspect the default model's cache; no files were removed.")
+    paths = {model, model.with_name("pos_embed.bin")}
+    files = [f for revision in repo.revisions for f in revision.files if f.file_path in paths]
+    for file in files:
+        if file.blob_path != file.file_path and file.blob_path.parent != repo.repo_path / "blobs":
+            raise ValueError("Model cache points outside its blob directory; no files were removed.")
+    strategy = cache.delete_files(*files)
+    strategy.execute()
+    if any(p.exists() or p.is_symlink() for p in strategy.files | strategy.blobs):
+        raise OSError("Could not remove all model cache files; default selection was preserved.")
+    # Another pull may have selected a different model while the cache was scanned.
+    if default_model() == selected:
+        default_model_file().unlink(missing_ok=True)
 
 
 def _export_files(model: str, files: dict[str, int | None]) -> list[str]:
@@ -121,8 +183,8 @@ def _select_model(files: dict[str, int | None], directory: str) -> str:
     return models[0]
 
 
-def pull(release: str, variant: str | None = None, force: bool = False) -> Path:
-    source = _release_source(release, variant)
+def pull(version: str, variant: str | None = None, force: bool = False) -> Path:
+    source = _model_source(version, variant)
     repo_id = source.repo_id
     try:
         info = HfApi().model_info(repo_id, revision=source.revision, files_metadata=True)
@@ -135,12 +197,12 @@ def pull(release: str, variant: str | None = None, force: bool = False) -> Path:
         for companion in required[1:]:
             hf_hub_download(repo_id, companion, revision=info.sha, force_download=force)
     except (httpx.HTTPError, HubHTTPError) as error:
-        raise ValueError(f"Could not download Muse Glimmer {release}: {error}") from error
+        raise ValueError(f"Could not download Muse Glimmer {version}: {error}") from error
     except ValueError as error:
         # Hub wraps forced-download metadata failures in a generic ValueError.
         if not force or error.__cause__ is None:
             raise
-        raise ValueError(f"Could not download Muse Glimmer {release}: {error.__cause__}") from error
+        raise ValueError(f"Could not download Muse Glimmer {version}: {error.__cause__}") from error
 
     # Keep the snapshot path: resolving its symlink would lose neighboring files.
     destination = default_model_file()

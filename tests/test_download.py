@@ -115,7 +115,7 @@ def test_pull_then_serve_uses_downloaded_model(hub, monkeypatch, capsys, variant
         ("Linux", "x86_64", "text-solo", "linux", "cpu"),
     ],
 )
-def test_release_catalog_selects_variant_and_platform_location(
+def test_model_catalog_selects_variant_and_platform_location(
     hub, monkeypatch, tmp_path, system, machine, variant, repo, directory
 ):
     catalog = tmp_path / "models.yaml"
@@ -172,22 +172,22 @@ def test_release_catalog_selects_variant_and_platform_location(
 
 
 @pytest.mark.parametrize(
-    ("release", "system", "machine", "message"),
+    ("version", "system", "machine", "message"),
     [
-        ("9.9", "Darwin", "arm64", "Unknown release '9.9'. Available releases: 1.0"),
+        ("9.9", "Darwin", "arm64", "Unknown model version '9.9'. Available model versions: 1.0"),
         ("1.0", "Darwin", "x86_64", "not supported on this platform (darwin-x86_64)"),
         ("1.0", "Linux", "aarch64", "not supported on this platform (linux-aarch64)"),
         ("1.0", "Windows", "AMD64", "not supported on this platform (windows-amd64)"),
     ],
 )
-def test_invalid_release_does_not_contact_hub_or_change_default(
-    hub, monkeypatch, capsys, release, system, machine, message
+def test_invalid_model_version_does_not_contact_hub_or_change_default(
+    hub, monkeypatch, capsys, version, system, machine, message
 ):
     monkeypatch.setattr(download.platform, "system", lambda: system)
     monkeypatch.setattr(download.platform, "machine", lambda: machine)
     hub.state.parent.mkdir()
     hub.state.write_text("/previous/model.pte\n")
-    assert main(["pull", release]) == 1
+    assert main(["pull", version]) == 1
     assert message in capsys.readouterr().err
     hub.api.model_info.assert_not_called()
     hub.fetch.assert_not_called()
@@ -206,15 +206,15 @@ def test_repository_id_is_rejected_before_contacting_hub(hub, capsys, repo_id, v
         args.extend(["--variant", variant])
     assert main(args) == 1
     error = capsys.readouterr().err
-    assert f"Unknown release {repo_id!r}" in error
-    assert "Available releases: 1.0" in error
+    assert f"Unknown model version {repo_id!r}" in error
+    assert "Available model versions: 1.0" in error
     hub.api.model_info.assert_not_called()
     hub.fetch.assert_not_called()
     assert hub.state.read_text() == "/previous/model.pte\n"
 
 
 @pytest.mark.parametrize("variant", ["missing", "unknown-folder"])
-def test_invalid_release_variant_lists_folder_names_without_downloading(hub, capsys, variant):
+def test_invalid_model_version_variant_lists_folder_names_without_downloading(hub, capsys, variant):
     hub.state.parent.mkdir()
     hub.state.write_text("/previous/model.pte\n")
     assert main(["pull", "1.0", "--variant", variant]) == 1
@@ -422,8 +422,8 @@ def test_empty_default_does_not_select_current_directory(hub, monkeypatch, capsy
 
 @pytest.mark.parametrize("override", [None, "cli", "config"])
 def test_pulled_dflash_setting_and_explicit_overrides(hub, monkeypatch, tmp_path, override):
-    source = download.ReleaseSource(repo_id="owner/repo", revision="v1", directory=".", dflash=True)
-    monkeypatch.setattr(download, "_release_source", lambda *args: source)
+    source = download.ModelSource(repo_id="owner/repo", revision="v1", directory=".", dflash=True)
+    monkeypatch.setattr(download, "_model_source", lambda *args: source)
     files(hub, "model.pte")
     download.pull("1.0")
     serve = Mock()
@@ -456,3 +456,230 @@ def test_legacy_default_path_still_serves(hub, monkeypatch):
     assert main(["serve"]) == 0
     assert serve.call_args.args[0] == model
     assert serve.call_args.args[1].dflash is False
+
+
+@pytest.mark.parametrize("args", [
+    [], ["--force"], ["--variant", "text-solo"],
+    ["--list", "--remove"], ["--list", "--force"], ["--remove", "--force"],
+    ["--list", "--variant", "text-solo"],
+    ["2.0", "--remove"], ["--remove", "--variant", "text-solo"],
+])
+def test_invalid_pull_options_do_not_download_or_remove(hub, args):
+    hub.state.parent.mkdir()
+    hub.state.write_text("/previous/model.pte\n")
+    with pytest.raises(SystemExit) as error:
+        main(["pull", *args])
+    assert error.value.code == 2
+    assert hub.state.read_text() == "/previous/model.pte\n"
+    hub.api.model_info.assert_not_called()
+    hub.fetch.assert_not_called()
+
+
+@pytest.mark.parametrize("args", [["--help"], ["pull", "--help"], ["serve", "--help"]])
+def test_help_is_offline_and_leaves_default_unchanged(hub, capsys, args):
+    hub.state.parent.mkdir()
+    hub.state.write_text("/previous/model.pte\n")
+    with pytest.raises(SystemExit) as error:
+        main(args)
+    assert error.value.code == 0
+    output = capsys.readouterr().out
+    if args[0] == "pull":
+        assert all(option in output for option in ("--force", "--list", "--remove", "--variant"))
+    hub.api.model_info.assert_not_called()
+    hub.fetch.assert_not_called()
+    assert hub.state.read_text() == "/previous/model.pte\n"
+
+
+@pytest.mark.parametrize("version", [None, "2.0", "missing"])
+def test_list_is_offline_and_can_filter_model_version(hub, tmp_path, monkeypatch, capsys, version):
+    catalog = tmp_path / "catalog.yaml"
+    catalog.write_text('''
+"2.0":
+  default_variant: text
+  variants:
+    text:
+      darwin-arm64: {repo_id: owner/repo, revision: v2, directory: text}
+    cuda-only:
+      linux-x86_64: {repo_id: owner/repo, revision: v2, directory: cuda}
+"3.0":
+  default_variant: vision
+  variants:
+    vision:
+      darwin-arm64: {repo_id: owner/repo, revision: v3, directory: vision}
+''')
+    monkeypatch.setattr(download, "resource_path", lambda _: catalog)
+    hub.state.parent.mkdir()
+    hub.state.write_text("/previous/model.pte\n")
+    assert main(["pull", "--list", *([version] if version else [])]) == (1 if version == "missing" else 0)
+    output = capsys.readouterr()
+    if version == "missing":
+        assert "Unknown model version" in output.err
+        assert not output.out
+    else:
+        assert "text [default]" in output.out
+        assert "cuda-only" not in output.out
+        assert ("vision [default]" in output.out) is (version is None)
+    hub.api.model_info.assert_not_called()
+    hub.fetch.assert_not_called()
+    assert hub.state.read_text() == "/previous/model.pte\n"
+
+
+def test_list_on_unsupported_platform(hub, catalog, monkeypatch, capsys):
+    monkeypatch.setattr(download.platform, "system", lambda: "Windows")
+    assert main(["pull", "--list"]) == 0
+    output = capsys.readouterr().out
+    assert "No models available for this platform" in output
+    assert "text-solo" not in output
+    assert not hub.state.exists()
+    hub.api.model_info.assert_not_called()
+
+
+@pytest.mark.parametrize("args", [["--list"], ["2.0"]])
+def test_invalid_catalog_reports_error_without_traceback(hub, tmp_path, monkeypatch, capsys, args):
+    catalog = tmp_path / "bad.yaml"
+    catalog.write_text("invalid: [")
+    monkeypatch.setattr(download, "resource_path", lambda _: catalog)
+    assert main(["pull", *args]) == 1
+    assert "Invalid model catalog" in capsys.readouterr().err
+    hub.api.model_info.assert_not_called()
+
+
+@pytest.mark.parametrize(("version", "directory"), [("1.1", "base"), ("1.1-small", "small")])
+def test_model_versions_are_exact_catalog_identifiers(hub, tmp_path, monkeypatch, capsys, version, directory):
+    catalog = tmp_path / "models.yaml"
+    catalog.write_text('''
+"1.1":
+  default_variant: text
+  variants:
+    text:
+      darwin-arm64: {repo_id: owner/base, revision: v1, directory: base}
+"1.1-small":
+  default_variant: text
+  variants:
+    text:
+      darwin-arm64: {repo_id: owner/small, revision: v1, directory: small}
+''')
+    monkeypatch.setattr(download, "resource_path", lambda _: catalog)
+    files(hub, "base/model.pte", "small/model.pte")
+    assert main(["pull", version]) == 0
+    hub.api.model_info.assert_called_once_with(f"owner/{directory}", revision="v1", files_metadata=True)
+    assert download.default_model().path == hub.snapshot / directory / "model.pte"
+    capsys.readouterr()
+    assert main(["pull", version, "--list"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert [line.strip() for line in lines if line.startswith("  ") and not line.startswith("    ")] == [version]
+
+
+@pytest.fixture
+def cached_export(tmp_path, monkeypatch):
+    # Real Hub cache layout, using only tiny files under pytest's temporary directory.
+    repo = tmp_path / "cache" / "models--owner--repo"
+    snapshot = repo / "snapshots" / ("a" * 40)
+    state = tmp_path / "default-model"
+    monkeypatch.setattr(download, "default_model_file", lambda: state)
+
+    def add(name, blob_name, revision=snapshot.name, symlink=True):
+        path = repo / "snapshots" / revision / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        blob = repo / "blobs" / blob_name if symlink else path
+        blob.parent.mkdir(parents=True, exist_ok=True)
+        blob.write_bytes(blob_name.encode())
+        if symlink:
+            path.symlink_to(blob)
+        return path, blob
+
+    return SimpleNamespace(repo=repo, snapshot=snapshot, state=state, add=add)
+
+
+@pytest.mark.parametrize("symlink", [False, True])
+@pytest.mark.parametrize("legacy", [False, True])
+def test_remove_deletes_export_but_preserves_other_variants_and_shared_blobs(cached_export, legacy, symlink, capsys):
+    cache = cached_export
+    model, model_blob = cache.add("vision/model.pte", "model", symlink=symlink)
+    positions, positions_blob = cache.add("vision/pos_embed.bin", "positions", symlink=symlink)
+    other, other_blob = cache.add("solo/model.pte", "other")
+    readme, _ = cache.add("vision/README.md", "readme")
+    if symlink:
+        shared, _ = cache.add("vision/pos_embed.bin", "positions", revision="b" * 40)
+    cache.state.write_text(str(model) if legacy else download.PulledModel(path=model).model_dump_json())
+
+    assert main(["pull", "--remove"]) == 0
+    assert "model removed" in capsys.readouterr().out
+    assert not cache.state.exists()
+    assert not model.exists() and not model.is_symlink()
+    assert not positions.exists() and not positions.is_symlink()
+    assert not model_blob.exists()
+    assert other.read_bytes() == other_blob.read_bytes() == b"other"
+    assert readme.read_bytes() == b"readme"
+    if symlink:
+        assert shared.read_bytes() == positions_blob.read_bytes() == b"positions"
+    else:
+        assert not positions_blob.exists()
+
+
+def test_remove_does_not_delete_local_model_outside_cache(cached_export, tmp_path, capsys):
+    model = tmp_path / "local.pte"
+    model.write_bytes(b"local weights")
+    cached_export.state.write_text(str(model))
+    assert main(["pull", "--remove"]) == 1
+    assert "not in a Hugging Face model cache" in capsys.readouterr().err
+    assert model.read_bytes() == b"local weights"
+    assert cached_export.state.read_text() == str(model)
+
+
+def test_remove_rejects_cache_link_to_external_file(cached_export, tmp_path, capsys):
+    cache = cached_export
+    model, _ = cache.add("model.pte", "model")
+    outside = tmp_path / "outside.pte"
+    outside.write_bytes(b"unrelated weights")
+    model.unlink()
+    model.symlink_to(outside)
+    cache.state.write_text(str(model))
+    assert main(["pull", "--remove"]) == 1
+    assert "outside its blob directory" in capsys.readouterr().err
+    assert outside.read_bytes() == b"unrelated weights"
+    assert model.is_symlink() and cache.state.exists()
+
+
+def test_remove_failure_keeps_default(cached_export, monkeypatch, capsys):
+    from huggingface_hub import DeleteCacheStrategy
+
+    model, _ = cached_export.add("model.pte", "model")
+    cached_export.state.write_text(str(model))
+    monkeypatch.setattr(DeleteCacheStrategy, "execute", Mock(side_effect=PermissionError("denied")))
+    assert main(["pull", "--remove"]) == 1
+    assert "denied" in capsys.readouterr().err
+    assert model.exists() and cached_export.state.read_text() == str(model)
+
+
+def test_remove_without_default_is_an_error(hub, capsys):
+    assert main(["pull", "--remove"]) == 1
+    assert "No default downloaded model" in capsys.readouterr().err
+    assert not hub.state.exists()
+    hub.api.model_info.assert_not_called()
+
+
+def test_remove_clears_stale_selection_when_cache_was_deleted(cached_export):
+    cache = cached_export
+    cache.state.write_text(str(cache.snapshot / "missing.pte"))
+    assert main(["pull", "--remove"]) == 0
+    assert not cache.state.exists()
+
+
+def test_remove_preserves_a_new_default_selected_during_deletion(cached_export, monkeypatch):
+    from huggingface_hub import DeleteCacheStrategy
+
+    cache = cached_export
+    model, _ = cache.add("model.pte", "model")
+    other, _ = cache.add("other/model.pte", "other")
+    cache.state.write_text(str(model))
+    execute = DeleteCacheStrategy.execute
+
+    def select_another_model(strategy):
+        cache.state.write_text(str(other))
+        execute(strategy)
+
+    monkeypatch.setattr(DeleteCacheStrategy, "execute", select_another_model)
+    assert main(["pull", "--remove"]) == 0
+    assert not model.exists()
+    assert other.exists() and download.default_model().path == other

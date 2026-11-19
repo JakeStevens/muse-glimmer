@@ -12,14 +12,23 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="muse-glimmer", description="Serve Muse Glimmer locally")
     root.add_argument("--version", action="version", version=__version__)
     commands = root.add_subparsers(dest="command", required=True)
-    command = commands.add_parser("pull", help="Download a model release for this platform")
-    command.add_argument("release", help="Release version (e.g. 1.0)")
+    command = commands.add_parser("pull", help="Download a model for this platform")
     command.add_argument(
-        "--variant",
-        help="Checkpoint folder name; defaults to the release's preferred variant",
+        "model_version", nargs="?", help="Model version (e.g. 1.1 or 1.1-small); optional filter for --list"
     )
     command.add_argument(
+        "--variant",
+        help="Checkpoint folder name; defaults to the model version's preferred variant",
+    )
+    actions = command.add_mutually_exclusive_group()
+    actions.add_argument(
         "--force", action="store_true", help="Re-download the model even if it is cached"
+    )
+    actions.add_argument(
+        "--list", action="store_true", help="List available model versions and variants for this platform"
+    )
+    actions.add_argument(
+        "--remove", action="store_true", help="Delete the default downloaded model and clear its selection"
     )
     command = commands.add_parser("serve", help="Start the local server")
     command.add_argument("--config", type=Path)
@@ -45,12 +54,27 @@ def parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parser().parse_args(argv)
+    root = parser()
+    args = root.parse_args(argv)
+    if args.command == "pull":
+        if args.list and args.variant is not None:
+            root.error("--variant cannot be used with --list")
+        if args.remove and (args.model_version is not None or args.variant is not None):
+            root.error("--remove deletes the default model; omit the model version and --variant")
+        if not (args.list or args.remove) and args.model_version is None:
+            root.error("a model version is required; use pull --list to see available models")
     try:
         if args.command == "pull":
-            from .download import pull
+            from .download import list_models, pull, remove_default_model
 
-            model = pull(args.release, args.variant, force=args.force)
+            if args.list:
+                list_models(args.model_version)
+                return 0
+            if args.remove:
+                remove_default_model()
+                print("Default downloaded model removed.")
+                return 0
+            model = pull(args.model_version, args.variant, force=args.force)
             print(f"Default model: {model.parent.name}\nRun muse-glimmer serve to start serving.")
             return 0
 
