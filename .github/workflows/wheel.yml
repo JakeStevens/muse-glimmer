@@ -86,8 +86,9 @@ jobs:
   test:
     needs: build
     runs-on: [self-hosted, macOS, ARM64, "muse-glimmer-${{ github.run_id }}"]
-    timeout-minutes: 15
+    timeout-minutes: 30
     strategy:
+      fail-fast: false
       matrix:
         python: ["3.11", "3.13"]
     steps:
@@ -104,6 +105,25 @@ jobs:
           path: dist
       - name: Verify binary-only installation
         run: python packaging/check_wheel.py --install dist/*.whl
+      - name: Install wheel and test dependencies
+        run: |
+          wheels=(dist/*.whl)
+          uv pip install --only-binary=:all: "${wheels[0]}[dev]"
+      - name: Run full test suite
+        env:
+          PYTHONPATH: ${{ github.workspace }}/python/src
+          PYTHONDONTWRITEBYTECODE: "1"
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+        run: python -m pytest tests -q --junitxml=reports/pytest.xml
+      - name: Smoke test the installed wheel with a live model
+        if: matrix.python == '3.13'
+        run: python packaging/smoke_wheel.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: test-results-${{ matrix.python }}
+          path: reports/
+          if-no-files-found: warn
 
   publish:
     needs: [build, test]
@@ -155,6 +175,9 @@ jobs:
     needs: [build, publish]
     runs-on: [self-hosted, macOS, ARM64, "muse-glimmer-${{ github.run_id }}"]
     timeout-minutes: 15
+    permissions:
+      contents: write
+      attestations: read
     env:
       RELEASE_VERSION: ${{ needs.build.outputs.version }}
       WHEEL_FILENAME: ${{ needs.build.outputs.filename }}
@@ -190,3 +213,54 @@ jobs:
           uv pip install pypi-attestations==0.0.31
           python -m pypi_attestations verify pypi \
             --repository "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "dist/$WHEEL_FILENAME"
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh attestation verify "dist/$WHEEL_FILENAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/wheel.yml" \
+            --source-digest "$GITHUB_SHA" \
+            --source-ref "$GITHUB_REF"
+          printf '%s  %s\n' "$WHEEL_SHA256" "$WHEEL_FILENAME" > dist/SHA256SUMS
+
+          # Retry drafts safely; never replace a published release's artifacts.
+          state=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --json isDraft --jq .isDraft 2>/dev/null) || state=missing
+          if [ "$state" = false ]; then
+            gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+              --pattern "$WHEEL_FILENAME" --pattern SHA256SUMS --dir existing-release
+            cmp "dist/$WHEEL_FILENAME" "existing-release/$WHEEL_FILENAME"
+            cmp dist/SHA256SUMS existing-release/SHA256SUMS
+            exit 0
+          fi
+
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          version, repo = os.environ["RELEASE_VERSION"], os.environ["GITHUB_REPOSITORY"]
+          Path("release-notes.md").write_text(
+              "Serve Muse Glimmer locally. Supports macOS 14+ on Apple Silicon, Python 3.11+.\n\n"
+              "```sh\npip install --pre --upgrade muse-glimmer\n"
+              "muse-glimmer pull 1.0\nmuse-glimmer serve\n```\n\n"
+              f"The attached wheel is identical to [PyPI {version}](https://pypi.org/project/muse-glimmer/{version}/). "
+              "It includes the native runtime; no source build or Xcode is needed. "
+              "Model weights are downloaded separately.\n\n"
+              f"[Build provenance](https://github.com/{repo}/attestations) · "
+              f"[Release workflow](https://github.com/{repo}/actions/runs/{os.environ['GITHUB_RUN_ID']})\n\n"
+              "`SHA256SUMS` contains the wheel checksum.\n\n"
+          )
+          PY
+          gh api --method POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$GITHUB_REF_NAME" --jq .body >> release-notes.md
+          prerelease=()
+          if python -c 'import os, sys; from packaging.version import Version; sys.exit(not Version(os.environ["RELEASE_VERSION"]).is_prerelease)'; then
+            prerelease=(--prerelease)
+          fi
+          if [ "$state" = missing ]; then
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
+              --draft "${prerelease[@]}" --title "$RELEASE_VERSION" --notes-file release-notes.md
+          fi
+          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            "dist/$WHEEL_FILENAME" dist/SHA256SUMS --clobber
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
