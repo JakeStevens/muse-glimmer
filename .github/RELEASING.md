@@ -6,12 +6,16 @@ builds one wheel, runs the full pytest suite and installation checks on Python
 it publishes to PyPI, verifies the published bytes and provenance, and creates
 a GitHub Release with the same wheel, `SHA256SUMS`, and release notes.
 
+ExecuTorch is pinned to a tested commit from its `viable/strict` branch. Normal
+builds use that exact gitlink, without following the branch automatically.
+
 ## Platform artifacts
 
 The current prebuilt target is **`darwin-arm64`** (Apple Silicon, Metal).
 Its Actions artifact is `muse-glimmer-darwin-arm64`; its wheel uses Python's
-standard `macosx_14_0_arm64` platform tag. Keep that wheel filename intact so pip
-can check compatibility. The wheel includes the compiled runtime and requires
+standard `macosx_26_0_arm64` platform tag. pip uses major-only tags for macOS 11+,
+so the CLI checks the **macOS 26.2+** runtime requirement before serving. Both the
+native worker and Metal library are compiled for 26.2. The wheel requires
 Python 3.11+, without Xcode or a source build.
 
 GitHub assets are labeled by platform, and release notes provide a download table.
@@ -21,8 +25,9 @@ platforms. Attach each tested wheel and include its digest in `SHA256SUMS`.
 
 ## Setup
 
-Use an Apple Silicon Mac with Python 3.11+, Git, [GitHub CLI](https://cli.github.com/),
-and [Xcode with Metal](../README.md#quickstart) (see "Install from source"). Your GitHub account needs
+Use an Apple Silicon Mac running macOS 26.2+ with Python 3.11+, Git,
+[GitHub CLI](https://cli.github.com/), and [Xcode with Metal](../README.md#quickstart)
+and a macOS 26.2+ SDK (see "Install from source"). Your GitHub account needs
 administration access to this repository to register temporary runners.
 
 The smoke test pulls model `1.0` with its recommended variant (currently DFlash).

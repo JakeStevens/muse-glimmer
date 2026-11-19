@@ -36,6 +36,17 @@ def check_metal() -> None:
         )
 
 
+def check_macos(minimum: str) -> None:
+    target = tuple(map(int, minimum.split(".")))
+    host = platform.mac_ver()[0]
+    sdk = subprocess.check_output(
+        ["xcrun", "--sdk", "macosx", "--show-sdk-version"], text=True,
+    ).strip()
+    for name, version in (("build host", host), ("SDK", sdk)):
+        if tuple(map(int, version.split(".")[:2])) < target:
+            raise RuntimeError(f"Building muse-glimmer requires macOS {minimum}+ {name}; found {version}.")
+
+
 def main(*, editable: bool = False) -> None:
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise RuntimeError("Source installation currently supports Apple silicon macOS.")
@@ -44,15 +55,16 @@ def main(*, editable: bool = False) -> None:
             raise RuntimeError(
                 f"Missing build tool: {tool}. Install Xcode with Metal tools and the Python build requirements."
             )
+    minimum = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["muse-glimmer"][
+        "macos-deployment-target"
+    ]
+    check_macos(minimum)
     check_metal()
     acquisition = runpy.run_path(str(ROOT / "packaging/source.py"))
     source = acquisition["source_checkout"](editable=editable)
     revision = acquisition["source_metadata"]()["revision"]
     local_changes = acquisition["local_source_hash"](source) if editable else ""
     source_id = f"{revision}-{local_changes}" if local_changes else revision
-    minimum = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["muse-glimmer"][
-        "macos-deployment-target"
-    ]
     key = hashlib.sha256(
         f"clean-worker:{source}:{source_id}:{minimum}:{sys.version_info[:2]}".encode()
     ).hexdigest()[:16]

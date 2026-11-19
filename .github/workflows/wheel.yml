@@ -254,7 +254,7 @@ jobs:
               "### Prebuilt downloads\n\n"
               "| Platform | Requirements | Download |\n"
               "| --- | --- | --- |\n"
-              f"| `{platform}` — Apple Silicon, Metal | macOS 14+, Python 3.11+ | [Prebuilt wheel]({download}) |\n\n"
+              f"| `{platform}` — Apple Silicon, Metal | macOS 26.2+, Python 3.11+ | [Prebuilt wheel]({download}) |\n\n"
               f"The attached wheel is identical to [PyPI {version}](https://pypi.org/project/muse-glimmer/{version}/). "
               "It includes the native runtime; no source build or Xcode is needed. "
               "Model weights are downloaded separately.\n\n"

@@ -136,6 +136,9 @@ def main(argv: list[str] | None = None) -> int:
             print("Run muse-glimmer serve to start serving.")
             return 0
 
+        from .runtime import check_platform, resolve_model, serve
+
+        check_platform()
         values = {key: value for key, value in vars(args).items() if key in Settings.model_fields}
         settings = load_settings(values, args.config)
         if settings.model:
@@ -151,8 +154,6 @@ def main(argv: list[str] | None = None) -> int:
                 )
         if model is None:
             raise ValueError("Run muse-glimmer pull 1.0 or pass --model /path/to/model.pte.")
-        from .runtime import resolve_model, serve
-
         model = resolve_model(model)
         print(f"Model: {model.absolute()}", file=sys.stderr, flush=True)
         print(

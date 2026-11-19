@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import errno
+import platform
 import socket
 from contextlib import ExitStack
 from pathlib import Path
@@ -12,6 +13,16 @@ from .config import Settings
 from .resources import resource_path
 
 MODEL_ID = "muse-glimmer-30B"
+MINIMUM_MACOS = (26, 2)
+
+
+def check_platform() -> None:
+    # Wheel tags cannot express macOS minor versions after macOS 11.
+    if platform.system() == "Darwin":
+        version = platform.mac_ver()[0]
+        if tuple(map(int, version.split(".")[:2])) < MINIMUM_MACOS:
+            minimum = ".".join(map(str, MINIMUM_MACOS))
+            raise ValueError(f"Serving requires macOS {minimum} or newer; found {version}.")
 
 
 def bind_server(host: str, port: int, *, fixed_port: bool = False) -> socket.socket:
@@ -125,6 +136,7 @@ def serve(
     evict_idle_sessions: bool = False,
     queue_requests: bool = False,
 ) -> None:
+    check_platform()
     with ExitStack() as stack:
         listeners = [listener] if listener is not None else []
         if listener is None:

@@ -6,6 +6,40 @@ from muse_glimmer.cli import main
 from muse_glimmer.config import load_settings
 
 
+@pytest.mark.parametrize("launch", [None, "muse", "open-webui"])
+def test_older_macos_fails_before_loading_model_or_launching_client(monkeypatch, capsys, launch):
+    from muse_glimmer import runtime
+
+    monkeypatch.setattr(runtime.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(runtime.platform, "mac_ver", lambda: ("26.1", (), "arm64"))
+    resolve = Mock(side_effect=AssertionError("must fail before model loading"))
+    monkeypatch.setattr(runtime, "resolve_model", resolve)
+    args = ["serve", "--model", "/missing/model.pte"]
+    if launch:
+        args += ["--launch", launch]
+    assert main(args) == 1
+    assert "Serving requires macOS 26.2 or newer; found 26.1" in capsys.readouterr().err
+    resolve.assert_not_called()
+    with pytest.raises(SystemExit) as result:
+        main(["serve", "--help"])
+    assert result.value.code == 0
+
+
+@pytest.mark.parametrize("version", ["26.2", "26.2.1", "27.0"])
+def test_supported_macos_matches_the_build_target(monkeypatch, version):
+    import tomllib
+    from pathlib import Path
+
+    from muse_glimmer import runtime
+
+    project = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text())
+    target = project["tool"]["muse-glimmer"]["macos-deployment-target"]
+    assert runtime.MINIMUM_MACOS == tuple(map(int, target.split(".")))
+    monkeypatch.setattr(runtime.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(runtime.platform, "mac_ver", lambda: (version, (), "arm64"))
+    runtime.check_platform()
+
+
 def test_no_command_shows_quickstart_without_starting_a_server(monkeypatch, capsys):
     from muse_glimmer import runtime
 

@@ -22,7 +22,7 @@ def check_wheel(wheel: Path) -> None:
     minimum = project["tool"]["muse-glimmer"]["macos-deployment-target"]
     version = project["project"]["version"]
     target = tuple(map(int, minimum.split(".")))
-    tag = f"py3-none-macosx_{minimum.replace('.', '_')}_arm64"
+    tag = f"py3-none-macosx_{target[0]}_0_arm64"
     if wheel.name != f"muse_glimmer-{version}-{tag}.whl":
         raise ValueError(f"Expected muse-glimmer {version} ({tag}), got {wheel.name}")
     with zipfile.ZipFile(wheel) as archive, tempfile.TemporaryDirectory() as directory:
@@ -67,8 +67,8 @@ def check_wheel(wheel: Path) -> None:
         metal = archive.read(f"{package}/_native/mlx.metallib")
         metal_versions = re.findall(rb"air64[\w.]*-apple-macosx(\d+)\.(\d+)", metal)
         for name, values in (("worker", versions), ("Metal library", metal_versions)):
-            if not values or max(tuple(map(int, value)) for value in values) > target:
-                raise ValueError(f"{name} does not support the wheel's macOS {minimum} target")
+            if {tuple(map(int, value)) for value in values} != {target}:
+                raise ValueError(f"{name} must be compiled for the macOS {minimum} deployment target")
         links = subprocess.check_output(["otool", "-L", str(worker)], text=True)
         for line in links.splitlines()[1:]:
             dependency = line.strip().split(" (", 1)[0]

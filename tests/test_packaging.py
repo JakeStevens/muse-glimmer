@@ -12,6 +12,7 @@ from email.parser import Parser
 from pathlib import Path
 
 import pytest
+from packaging.tags import mac_platforms
 
 
 @pytest.mark.parametrize("mode", ["wheel", "editable"])
@@ -66,7 +67,11 @@ def test_installed_package_uses_its_own_shared_resources(tmp_path, mode):
         description = metadata.get_payload()
         assert "pip install --pre muse-glimmer" in description
         assert "pip install -e ." in description
-        assert wheel.name.endswith("-py3-none-macosx_14_0_arm64.whl")
+        assert wheel.name.endswith("-py3-none-macosx_26_0_arm64.whl")
+        tag = wheel.stem.rsplit("-", 1)[1]
+        assert tag in set(mac_platforms((26, 2), "arm64"))
+        assert tag in set(mac_platforms((27, 0), "arm64"))
+        assert tag not in set(mac_platforms((15, 0), "arm64"))
         source_url = f"https://github.com/mergennachin/muse-glimmer/tree/v{metadata['Version']}"
         assert f"Source, {source_url}" in metadata.get_all("Project-URL")
         assert f"/blob/v{metadata['Version']}/default_config.toml" in description
@@ -178,3 +183,22 @@ def test_missing_metal_toolchain_fails_before_native_build(monkeypatch):
         check_metal()
     assert "missing Metal Toolchain" in str(error.value)
     assert calls == [["xcrun", "-sdk", "macosx", "metal", "--version"]]
+
+
+@pytest.mark.parametrize(("host", "sdk", "error"), [
+    ("26.1", "27.0", "build host"),
+    ("27.0", "26.1", "SDK"),
+    ("26.2", "26.2", None),
+    ("27.2", "27.0", None),
+])
+def test_source_build_requires_supported_host_and_sdk(monkeypatch, host, sdk, error):
+    import platform
+
+    check = runpy.run_path(str(Path(__file__).resolve().parents[1] / "packaging/build_native.py"))["check_macos"]
+    monkeypatch.setattr(platform, "mac_ver", lambda: (host, (), ""))
+    monkeypatch.setattr(subprocess, "check_output", lambda *args, **kwargs: sdk + "\n")
+    if error:
+        with pytest.raises(RuntimeError, match=f"macOS 26.2.*{error}"):
+            check("26.2")
+    else:
+        check("26.2")

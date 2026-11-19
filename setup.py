@@ -81,8 +81,9 @@ class MacWheel(bdist_wheel):
         self.root_is_pure = False
 
     def get_tag(self):
-        minimum = metadata["tool"]["muse-glimmer"]["macos-deployment-target"].replace(".", "_")
-        return "py3", "none", f"macosx_{minimum}_arm64"
+        # pip uses major-only compatibility tags for macOS 11+.
+        major = metadata["tool"]["muse-glimmer"]["macos-deployment-target"].split(".")[0]
+        return "py3", "none", f"macosx_{major}_0_arm64"
 
 
 root = Path(__file__).parent

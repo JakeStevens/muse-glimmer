@@ -2,7 +2,7 @@
 
 Serve [Muse Glimmer 30B](https://ai.meta.com/research/publications/muse-glimmer-30b-an-on-device-agentic-model/) locally. Development preview.
 
-**Supported platforms:** macOS 14+ on Apple silicon. Requires Python 3.11+.
+**Supported platforms:** macOS 26.2+ on Apple silicon. Requires Python 3.11+.
 
 ## Quickstart
 
