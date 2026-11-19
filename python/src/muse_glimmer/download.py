@@ -4,13 +4,15 @@ import os
 import platform
 import sys
 import tempfile
+from dataclasses import replace
 from pathlib import Path, PurePosixPath
 
 import httpx
 import yaml
-from huggingface_hub import CacheNotFound, HfApi, hf_hub_download, scan_cache_dir
+from huggingface_hub import CacheNotFound, HfApi, hf_hub_download, scan_cache_dir, snapshot_download
+from huggingface_hub.errors import LocalEntryNotFoundError
 from platformdirs import user_data_path
-from pydantic import BaseModel, ConfigDict, TypeAdapter
+from pydantic import BaseModel, ConfigDict, TypeAdapter, field_validator
 
 from .resources import resource_path
 
@@ -28,6 +30,26 @@ class ModelSource(BaseModel):
     revision: str
     directory: str
     dflash: bool = False
+    files: list[str] | None = None
+
+    @field_validator("directory")
+    @classmethod
+    def relative_directory(cls, value: str) -> str:
+        path = PurePosixPath(value)
+        if path.is_absolute() or ".." in path.parts:
+            raise ValueError("export directory must stay inside the repository")
+        return value
+
+    @field_validator("files")
+    @classmethod
+    def export_filenames(cls, value: list[str] | None) -> list[str] | None:
+        if value is not None and (
+            len(value) != len(set(value))
+            or sum(name.endswith(".pte") for name in value) != 1
+            or any(name != PurePosixPath(name).name or name in {"", ".", ".."} for name in value)
+        ):
+            raise ValueError("export files must be unique filenames including exactly one .pte")
+        return value
 
 
 class PulledModel(BaseModel):
@@ -88,9 +110,45 @@ def default_model() -> PulledModel | None:
     if not value:
         return None
     if value.startswith("{"):
-        return PulledModel.model_validate_json(value)
+        try:
+            return PulledModel.model_validate_json(value)
+        except ValueError as error:
+            raise ValueError(
+                "Saved model selection is invalid. Run muse-glimmer pull --remove to reset it."
+            ) from error
     # Existing installations stored only the model path.
     return PulledModel(path=Path(value))
+
+
+def _local_export(source: ModelSource) -> tuple[Path, list[Path]] | None:
+    """Inspect an existing snapshot without contacting the Hub or downloading files."""
+    try:
+        snapshot = Path(snapshot_download(
+            source.repo_id, revision=source.revision, local_files_only=True,
+        ))
+    except LocalEntryNotFoundError:
+        return None
+    directory = snapshot / source.directory
+    if source.files is None:
+        # Older/custom catalogs discover filenames online. Still expose their cached files.
+        if not directory.is_dir():
+            return None
+        names = {str(p.relative_to(snapshot)): None for p in directory.iterdir()}
+        try:
+            filename = _select_model(names, source.directory)
+        except ValueError:
+            return None
+        required = [snapshot / name for name in _export_files(filename, names)]
+    else:
+        names = {str(PurePosixPath(source.directory) / name): None for name in source.files}
+        filename = _select_model(names, source.directory)
+        required = [snapshot / name for name in names]
+    return snapshot / filename, required
+
+
+def _entry_path(path: Path) -> Path:
+    # Normalize directory aliases without dereferencing the artifact's blob symlink.
+    return path.parent.resolve() / path.name
 
 
 def list_models(version: str | None = None) -> None:
@@ -106,16 +164,23 @@ def list_models(version: str | None = None) -> None:
     def style(text: str, code: str) -> str:
         return f"\033[{code}m{text}\033[0m" if color else text
 
-    selected = default_model()
+    try:
+        selected = default_model()
+        selection_error = None
+    except ValueError as error:
+        selected, selection_error = None, str(error)
     print(style("SELECTED MODEL", "1;36"))
     print("==============")
-    if selected is None:
+    if selection_error:
+        print(style(selection_error, "33"))
+    elif selected is None:
         print("Artifact: none")
     else:
         path = selected.path.absolute()
         missing = " " + style("[missing]", "33") if not path.is_file() else ""
         print(f"Artifact: {style(path.name, '1')}{missing}")
         print(f"Location: {path}")
+    print("Selection applies to the next serve; a running server keeps its model.")
     print()
     target = f"{platform.system().lower()}-{platform.machine().lower()}"
     print(f"Available models for {target}:")
@@ -126,45 +191,102 @@ def list_models(version: str | None = None) -> None:
             available = True
             print(f"  {version}")
             for name in variants:
-                print(f"    {name}{' [default]' if name == model.default_variant else ''}")
+                source = model.variants[name][target]
+                local = _local_export(source)
+                labels = ["recommended"] if name == model.default_variant else []
+                if local is not None:
+                    path, required = local
+                    if any(p.is_file() or p.is_symlink() for p in required):
+                        labels.append("downloaded" if all(p.is_file() for p in required) else "incomplete")
+                        if selected and _entry_path(path) == _entry_path(selected.path):
+                            labels.append("selected")
+                print(f"    {name}" + "".join(f" [{label}]" for label in labels))
+                if local is not None and any(p.is_file() or p.is_symlink() for p in local[1]):
+                    print(f"      Location: {local[0].absolute()}")
     if not available:
         print("  No models available for this platform.")
 
 
-def remove_default_model() -> None:
-    selected = default_model()
-    if selected is None:
-        raise ValueError("No default downloaded model to remove.")
-    # Resolve parent directories, but keep the snapshot entry rather than its blob.
-    model = selected.path.parent.resolve() / selected.path.name
+def remove_model(version: str | None = None, variant: str | None = None) -> Path | None:
+    try:
+        selected = default_model()
+    except ValueError:
+        if version is None:
+            default_model_file().unlink()
+            print("Cleared invalid selection. No model files were removed; use a model version to target a download.")
+            return None
+        selected = None
+    if version is not None:
+        source = _model_source(version, variant)
+        local = _local_export(source)
+        if local is None:
+            print(f"Model {version} ({source.directory}) is not downloaded. Nothing to remove.")
+            return None
+        model, paths = local
+    elif selected is not None:
+        model = selected.path
+        paths = [model, model.with_name("pos_embed.bin")]
+    else:
+        print("No model selected. Nothing to remove.")
+        return None
+    model = _entry_path(model)
+    _delete_export(model, {_entry_path(p) for p in paths})
+    if selected and _entry_path(selected.path) == model and default_model() == selected:
+        default_model_file().unlink(missing_ok=True)
+    return model
+
+
+def _delete_export(model: Path, paths: set[Path]) -> None:
     snapshots = next(
         (p for p in model.parents if p.name == "snapshots" and p.parent.name.startswith("models--")),
         None,
     )
     if snapshots is None or model.suffix != ".pte":
-        raise ValueError("Default model is not in a Hugging Face model cache; no files were removed.")
+        raise ValueError("Model is not in a Hugging Face model cache; no files were removed.")
     if not snapshots.parent.exists():
-        default_model_file().unlink()
         return
+    # Keep the first symlink hop: a repo blob may itself link to a shared payload.
+    links = {p: os.readlink(p) for p in paths if p.is_symlink()}
+    blobs_dir = (snapshots.parent / "blobs").resolve()
+    for path, target in links.items():
+        if _entry_path(path.parent / target).parent != blobs_dir:
+            raise ValueError("Model cache points outside its blob directory; no files were removed.")
+    # Missing payloads have no bytes to reclaim, but stale links must not block cache inspection.
+    for path in links:
+        if not path.exists():
+            path.unlink()
     try:
         cache = scan_cache_dir(snapshots.parent.parent)
     except CacheNotFound as error:
         raise ValueError("Model cache disappeared during removal; try again.") from error
     repo = next((r for r in cache.repos if r.repo_path == snapshots.parent), None)
     if repo is None:
-        raise ValueError("Cannot inspect the default model's cache; no files were removed.")
-    paths = {model, model.with_name("pos_embed.bin")}
+        raise ValueError("Cannot inspect this model's cache. Other damaged entries may need repair.")
     files = [f for revision in repo.revisions for f in revision.files if f.file_path in paths]
     for file in files:
-        if file.blob_path != file.file_path and file.blob_path.parent != repo.repo_path / "blobs":
+        if file.blob_path != file.file_path and _entry_path(file.blob_path).parent != blobs_dir:
             raise ValueError("Model cache points outside its blob directory; no files were removed.")
     strategy = cache.delete_files(*files)
-    strategy.execute()
-    if any(p.exists() or p.is_symlink() for p in strategy.files | strategy.blobs):
-        raise OSError("Could not remove all model cache files; default selection was preserved.")
-    # Another pull may have selected a different model while the cache was scanned.
-    if default_model() == selected:
-        default_model_file().unlink(missing_ok=True)
+    retained = {
+        _entry_path(f.blob_path) for revision in repo.revisions for f in revision.files
+        if f.file_path not in paths
+    }
+    # HF compares paths lexically; normalize aliases before deciding a blob is unreferenced.
+    strategy = replace(strategy, blobs=frozenset(
+        p for p in strategy.blobs if _entry_path(p) not in retained
+    ))
+    try:
+        strategy.execute()
+        if any(p.exists() or p.is_symlink() for p in strategy.files | strategy.blobs):
+            raise OSError("Could not remove all model cache files. Fix permissions and retry removal.")
+    except BaseException:
+        # Preserve references to payloads that survived a partial failure so retry can find them.
+        for path, target in links.items():
+            if not path.is_symlink() and not path.exists() and (path.parent / target).exists():
+                path.symlink_to(target)
+        raise
+    if any(_entry_path(f.blob_path) in retained for f in files):
+        print("Shared data still used by other downloads was kept.")
 
 
 def _export_files(model: str, files: dict[str, int | None]) -> list[str]:
@@ -203,12 +325,24 @@ def _select_model(files: dict[str, int | None], directory: str) -> str:
 
 def pull(version: str, variant: str | None = None, force: bool = False) -> Path:
     source = _model_source(version, variant)
+    if not force and source.files is not None:
+        local = _local_export(source)
+        if local is not None and all(p.is_file() for p in local[1]):
+            model = local[0]
+            _save_default(model, source.dflash)
+            print(f"Using downloaded model: {model.name}", flush=True)
+            return model
     repo_id = source.repo_id
     try:
         info = HfApi().model_info(repo_id, revision=source.revision, files_metadata=True)
         files = {file.rfilename: file.size for file in info.siblings}
         filename = _select_model(files, source.directory)
         required = _export_files(filename, files)
+        if source.files is not None:
+            declared = [str(PurePosixPath(source.directory) / name) for name in source.files]
+            if not set(required).issubset(declared) or any(name not in files for name in declared):
+                raise ValueError(f"Model catalog files do not match export {source.directory!r}.")
+            required = [filename, *[name for name in declared if name != filename]]
 
         print(f"Downloading {source.directory} ({_download_size(required, files)})", flush=True)
         model = Path(hf_hub_download(repo_id, filename, revision=info.sha, force_download=force))
@@ -222,6 +356,11 @@ def pull(version: str, variant: str | None = None, force: bool = False) -> Path:
             raise
         raise ValueError(f"Could not download Muse Glimmer {version}: {error.__cause__}") from error
 
+    _save_default(model, source.dflash)
+    return model
+
+
+def _save_default(model: Path, dflash: bool) -> None:
     # Keep the snapshot path: resolving its symlink would lose neighboring files.
     destination = default_model_file()
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -230,9 +369,8 @@ def pull(version: str, variant: str | None = None, force: bool = False) -> Path:
     try:
         with file:
             file.write(
-                PulledModel(path=model.absolute(), dflash=source.dflash).model_dump_json() + "\n"
+                PulledModel(path=model.absolute(), dflash=dflash).model_dump_json() + "\n"
             )
         temporary.replace(destination)
     finally:
         temporary.unlink(missing_ok=True)
-    return model

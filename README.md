@@ -51,11 +51,12 @@ muse-glimmer serve
 ```
 
 Use `pull 1.0 --variant <folder-name>` to choose a specific folder,
-or `serve --model <path>` for a local model.
+reusing complete downloads offline, or `serve --model <path>` for a local model.
 Use `pull 1.0 --force` to re-download a cached model.
-Use `pull --list` to see model versions, variants, and the selected artifact's location.
-Use `pull --remove` to delete the default downloaded model; other variants and shared data
-they still need are kept.
+Use `pull --list` to see what's downloaded and selected, with artifact locations.
+Use `pull --remove` to delete the selected download, or
+`pull 1.0 --variant <folder-name> --remove` to delete another. Shared data is kept when needed.
+Selection changes apply to the next `serve`; restart an existing server to switch models.
 
 The server runs at `http://127.0.0.1:8000` with a live terminal HUD. **Ctrl+C** stops it.
 

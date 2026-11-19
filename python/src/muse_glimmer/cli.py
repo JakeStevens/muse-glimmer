@@ -12,9 +12,9 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="muse-glimmer", description="Serve Muse Glimmer locally")
     root.add_argument("--version", action="version", version=__version__)
     commands = root.add_subparsers(dest="command", required=True)
-    command = commands.add_parser("pull", help="Download a model for this platform")
+    command = commands.add_parser("pull", help="Download or select a model", allow_abbrev=False)
     command.add_argument(
-        "model_version", nargs="?", help="Model version (e.g. 1.1 or 1.1-small); optional filter for --list"
+        "model_version", nargs="?", help="Model version from --list (e.g. 1.0); optional filter for --list"
     )
     command.add_argument(
         "--variant",
@@ -29,7 +29,8 @@ def parser() -> argparse.ArgumentParser:
         help="Show available model versions, variants, and the selected artifact's location",
     )
     actions.add_argument(
-        "--remove", action="store_true", help="Delete the default downloaded model and clear its selection"
+        "--remove", action="store_true",
+        help="Delete the specified download, or the selected model when no version is given",
     )
     command = commands.add_parser("serve", help="Start the local server")
     command.add_argument("--config", type=Path)
@@ -60,20 +61,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "pull":
         if args.list and args.variant is not None:
             root.error("--variant cannot be used with --list")
-        if args.remove and (args.model_version is not None or args.variant is not None):
-            root.error("--remove deletes the default model; omit the model version and --variant")
+        if args.remove and args.variant is not None and args.model_version is None:
+            root.error("--variant requires a model version")
         if not (args.list or args.remove) and args.model_version is None:
             root.error("a model version is required; use pull --list to see available models")
     try:
         if args.command == "pull":
-            from .download import list_models, pull, remove_default_model
+            from .download import list_models, pull, remove_model
 
             if args.list:
                 list_models(args.model_version)
                 return 0
             if args.remove:
-                remove_default_model()
-                print("Default downloaded model removed.")
+                model = remove_model(args.model_version, args.variant)
+                if model is not None:
+                    print(f"Removed artifact: {model.name}\nLocation: {model.absolute()}")
                 return 0
             model = pull(args.model_version, args.variant, force=args.force)
             print(f"Selected artifact: {model.name}\nLocation: {model.absolute()}")

@@ -1,12 +1,13 @@
 """CLI download behavior with mocked Hub calls; no model weights are transferred."""
 
 import importlib
+import os
 from types import SimpleNamespace
 from unittest.mock import Mock, call
 
 import httpx
 import pytest
-from huggingface_hub.errors import HfHubHTTPError
+from huggingface_hub.errors import HfHubHTTPError, LocalEntryNotFoundError
 from muse_glimmer import download, runtime
 from muse_glimmer.cli import main
 
@@ -18,6 +19,7 @@ def hub(tmp_path, monkeypatch):
     state = tmp_path / "data" / "default-model"
     monkeypatch.setattr(download, "default_model_file", lambda: state)
     snapshot = tmp_path / "cache" / "snapshots" / ("a" * 40)
+    monkeypatch.setattr(download, "snapshot_download", Mock(side_effect=LocalEntryNotFoundError("not cached")))
 
     def fetch(repo_id, filename, revision, force_download=False):
         path = snapshot / filename
@@ -463,7 +465,7 @@ def test_legacy_default_path_still_serves(hub, monkeypatch):
     [], ["--force"], ["--variant", "text-solo"],
     ["--list", "--remove"], ["--list", "--force"], ["--remove", "--force"],
     ["--list", "--variant", "text-solo"],
-    ["2.0", "--remove"], ["--remove", "--variant", "text-solo"],
+    ["--r"], ["--remove", "--variant", "text-solo"],
 ])
 def test_invalid_pull_options_do_not_download_or_remove(hub, args):
     hub.state.parent.mkdir()
@@ -517,9 +519,9 @@ def test_list_is_offline_and_can_filter_model_version(hub, tmp_path, monkeypatch
         assert "Unknown model version" in output.err
         assert not output.out
     else:
-        assert "text [default]" in output.out
+        assert "text [recommended]" in output.out
         assert "cuda-only" not in output.out
-        assert ("vision [default]" in output.out) is (version is None)
+        assert ("vision [recommended]" in output.out) is (version is None)
         assert output.out.startswith("SELECTED MODEL\n")
         assert "Artifact: model.pte [missing]" in output.out
         assert "Location: /previous/model.pte" in output.out
@@ -610,7 +612,7 @@ def test_remove_deletes_export_but_preserves_other_variants_and_shared_blobs(cac
     cache.state.write_text(str(model) if legacy else download.PulledModel(path=model).model_dump_json())
 
     assert main(["pull", "--remove"]) == 0
-    assert "model removed" in capsys.readouterr().out
+    assert "Removed artifact: model.pte" in capsys.readouterr().out
     assert not cache.state.exists()
     assert not model.exists() and not model.is_symlink()
     assert not positions.exists() and not positions.is_symlink()
@@ -658,9 +660,9 @@ def test_remove_failure_keeps_default(cached_export, monkeypatch, capsys):
     assert model.exists() and cached_export.state.read_text() == str(model)
 
 
-def test_remove_without_default_is_an_error(hub, capsys):
-    assert main(["pull", "--remove"]) == 1
-    assert "No default downloaded model" in capsys.readouterr().err
+def test_remove_without_default_has_nothing_to_do(hub, capsys):
+    assert main(["pull", "--remove"]) == 0
+    assert "Nothing to remove" in capsys.readouterr().out
     assert not hub.state.exists()
     hub.api.model_info.assert_not_called()
 
@@ -689,3 +691,133 @@ def test_remove_preserves_a_new_default_selected_during_deletion(cached_export, 
     assert main(["pull", "--remove"]) == 0
     assert not model.exists()
     assert other.exists() and download.default_model().path == other
+
+
+@pytest.fixture
+def local_models(cached_export, monkeypatch):
+    cache = cached_export
+    catalog = cache.state.with_name("models.yaml")
+    catalog.write_text(f'''
+"1.1-small":
+  default_variant: solo
+  variants:
+    solo:
+      darwin-arm64:
+        repo_id: owner/repo
+        revision: {'a' * 40}
+        directory: solo
+        files: [model.pte]
+    vision:
+      darwin-arm64:
+        repo_id: owner/repo
+        revision: {'a' * 40}
+        directory: vision
+        files: [model.pte, pos_embed.bin]
+''')
+    monkeypatch.setattr(download, "resource_path", lambda _: catalog)
+    monkeypatch.setattr(download.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(download.platform, "machine", lambda: "arm64")
+    cache.solo, cache.solo_blob = cache.add("solo/model.pte", "solo")
+    cache.vision, _ = cache.add("vision/model.pte", "vision")
+    cache.positions, _ = cache.add("vision/pos_embed.bin", "positions")
+    cache.local = Mock(return_value=str(cache.snapshot))
+    monkeypatch.setattr(download, "snapshot_download", cache.local)
+    cache.api = Mock()
+    cache.api.model_info.side_effect = httpx.ConnectError("offline")
+    monkeypatch.setattr(download, "HfApi", lambda: cache.api)
+    cache.fetch = Mock(side_effect=AssertionError("must not download cached files"))
+    monkeypatch.setattr(download, "hf_hub_download", cache.fetch)
+    return cache
+
+
+def test_switch_list_and_targeted_remove_work_offline(local_models, capsys):
+    cache = local_models
+    assert main(["pull", "1.1-small"]) == 0
+    assert download.default_model().path == cache.solo
+    assert main(["pull", "1.1-small", "--variant", "vision"]) == 0
+    assert download.default_model().path == cache.vision
+    capsys.readouterr()
+    assert main(["pull", "--list"]) == 0
+    output = capsys.readouterr().out
+    assert "solo [recommended] [downloaded]" in output
+    assert "vision [downloaded] [selected]" in output
+    assert str(cache.solo) in output and str(cache.vision) in output
+    assert main(["pull", "1.1-small", "--variant", "solo", "--remove"]) == 0
+    assert not cache.solo.exists() and not cache.solo_blob.exists()
+    assert download.default_model().path == cache.vision
+    assert cache.vision.exists() and cache.positions.exists()
+    assert main(["pull", "--remove"]) == 0
+    assert not cache.vision.exists() and not cache.positions.exists()
+    assert download.default_model() is None
+    cache.api.model_info.assert_not_called()
+    cache.fetch.assert_not_called()
+    assert all(call.kwargs["local_files_only"] for call in cache.local.call_args_list)
+
+
+@pytest.mark.parametrize("force", [False, True])
+def test_incomplete_or_forced_download_needs_network_and_preserves_selection(local_models, capsys, force):
+    cache = local_models
+    assert main(["pull", "1.1-small"]) == 0
+    if not force:
+        cache.positions.unlink()
+        assert main(["pull", "--list"]) == 0
+        assert "vision [incomplete]" in capsys.readouterr().out
+    args = ["pull", "1.1-small", "--variant", "vision"] + (["--force"] if force else [])
+    assert main(args) == 1
+    assert "offline" in capsys.readouterr().err
+    assert download.default_model().path == cache.solo
+    cache.api.model_info.assert_called_once()
+
+
+def test_partial_removal_can_be_retried_without_leaking_payload(cached_export, monkeypatch, capsys):
+    cache = cached_export
+    model, blob = cache.add("model.pte", "weights")
+    cache.state.write_text(str(model))
+    original = os.remove
+
+    def denied(path, *args, **kwargs):
+        if path == blob:
+            raise PermissionError("denied")
+        return original(path, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "remove", denied)
+        assert main(["pull", "--remove"]) == 1
+    assert "retry removal" in capsys.readouterr().err
+    assert blob.exists() and model.is_symlink() and cache.state.exists()
+    assert main(["pull", "--remove"]) == 0
+    assert not blob.exists() and not model.is_symlink() and not cache.state.exists()
+
+
+def test_removal_handles_aliases_without_deleting_shared_data(cached_export, tmp_path):
+    cache = cached_export
+    model, blob = cache.add("model.pte", "weights")
+    other, _ = cache.add("other/model.pte", "weights")
+    alias = tmp_path / "cache-alias"
+    alias.symlink_to(cache.repo.parent, target_is_directory=True)
+    model.unlink()
+    model.symlink_to(alias / cache.repo.name / "blobs" / blob.name)
+    cache.state.write_text(str(alias / cache.repo.name / "snapshots" / cache.snapshot.name / "model.pte"))
+    assert main(["pull", "--remove"]) == 0
+    assert not model.is_symlink()
+    assert other.read_bytes() == blob.read_bytes() == b"weights"
+
+
+def test_remove_cleans_broken_snapshot_link(cached_export):
+    model, blob = cached_export.add("model.pte", "weights")
+    cached_export.state.write_text(str(model))
+    blob.unlink()
+    assert main(["pull", "--remove"]) == 0
+    assert not model.is_symlink() and not cached_export.state.exists()
+
+
+def test_corrupt_selection_can_be_listed_and_reset_without_deleting_models(local_models, capsys):
+    cache = local_models
+    cache.state.write_text("{broken")
+    assert main(["pull", "--list"]) == 0
+    output = capsys.readouterr().out
+    assert "selection is invalid" in output
+    assert "solo [recommended] [downloaded]" in output
+    assert main(["pull", "--remove"]) == 0
+    assert "No model files were removed" in capsys.readouterr().out
+    assert cache.solo.exists() and cache.vision.exists() and not cache.state.exists()
