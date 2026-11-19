@@ -362,6 +362,7 @@ def test_occupied_port_does_not_launch_or_touch_existing_server(run_launch, tmp_
             _, err = proc.communicate(timeout=5)
             assert proc.returncode == 1
             assert "Address already in use" in err
+            assert "--port " in err
             assert not (tmp_path / f"{client}.json").exists()
             assert not (tmp_path / "server.json").exists()
             assert listener.getsockname()[1] > 0
@@ -483,6 +484,8 @@ def test_webui_occupied_port_does_not_start_model(run_launch, tmp_path):
             _, err = proc.communicate(timeout=5)
             assert proc.returncode == 1
             assert "Address already in use" in err
+            assert "Stop the service using this port" in err
+            assert "Or choose another port" not in err
             assert not (tmp_path / "server.json").exists()
             assert listener.getsockname()[1] > 0
 

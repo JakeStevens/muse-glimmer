@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import errno
+import socket
+from contextlib import nullcontext
 from pathlib import Path
-from socket import socket
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -10,6 +12,20 @@ from .config import Settings
 from .resources import resource_path
 
 MODEL_ID = "muse-glimmer-30B"
+
+
+def bind_server(host: str, port: int, *, fixed_port: bool = False) -> socket.socket:
+    """Reserve a listening socket before starting the model or client."""
+    try:
+        return socket.create_server((host, port), family=socket.AF_INET6 if ":" in host else socket.AF_INET)
+    except OSError as error:
+        if error.errno != errno.EADDRINUSE:
+            raise
+        hint = "Stop the service using this port and try again."
+        if not fixed_port:
+            alternate = port + 1 if port < 65535 else 8000
+            hint += f" Or choose another port with --port {alternate}."
+        raise ValueError(f"Address already in use: {host}:{port}. {hint}") from None
 
 
 class QueuedRequests:
@@ -51,7 +67,9 @@ def resolve_model(path: Path) -> Path:
         return models[0]
     if not path.is_file() or path.suffix != ".pte":
         raise ValueError(
-            f"Expected an existing .pte file or export directory: {path}. Pull again or use --model."
+            f"Expected an existing .pte file or export directory: {path}.\n"
+            "Run muse-glimmer pull --list to choose a model to download, "
+            "or use --model /path/to/model.pte for a local file."
         )
     return path
 
@@ -101,25 +119,26 @@ def server_options(model: Path, settings: Settings) -> list[str]:
 def serve(
     model: Path,
     settings: Settings,
-    listener: socket | None = None,
+    listener: socket.socket | None = None,
     *,
     api_dialect: str = "openai",
     evict_idle_sessions: bool = False,
     queue_requests: bool = False,
 ) -> None:
-    if not (native_dir() / "muse_glimmer_batching_worker").is_file():
-        raise ValueError("Native runtime missing. Reinstall muse-glimmer.")
-    import uvicorn
+    with (bind_server(settings.host, settings.port) if listener is None else nullcontext(listener)) as bound:
+        if not (native_dir() / "muse_glimmer_batching_worker").is_file():
+            raise ValueError("Native runtime missing. Reinstall muse-glimmer.")
+        import uvicorn
 
-    from ._vendor.muse import serve_batching as serving
+        from ._vendor.muse import serve_batching as serving
 
-    options = [*server_options(model, settings), "--api-dialect", api_dialect]
-    if evict_idle_sessions:
-        options.append("--evict-idle-sessions")
-    args = serving._parse_args(options)
-    app = serving.build_app_from_args(args)
-    if queue_requests:
-        app = QueuedRequests(app, settings.concurrency)
+        options = [*server_options(model, settings), "--api-dialect", api_dialect]
+        if evict_idle_sessions:
+            options.append("--evict-idle-sessions")
+        args = serving._parse_args(options)
+        app = serving.build_app_from_args(args)
+        if queue_requests:
+            app = QueuedRequests(app, settings.concurrency)
 
-    config = uvicorn.Config(app, host=settings.host, port=settings.port, log_level="info")
-    uvicorn.Server(config).run(sockets=[listener] if listener is not None else None)
+        config = uvicorn.Config(app, host=settings.host, port=settings.port, log_level="info")
+        uvicorn.Server(config).run(sockets=[bound])

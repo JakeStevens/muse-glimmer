@@ -1,8 +1,52 @@
+import socket
 from unittest.mock import Mock
 
 import pytest
 from muse_glimmer.cli import main
 from muse_glimmer.config import load_settings
+
+
+def test_no_command_shows_quickstart_without_starting_a_server(monkeypatch, capsys):
+    from muse_glimmer import runtime
+
+    serve = Mock()
+    monkeypatch.setattr(runtime, "serve", serve)
+    assert main([]) == 0
+    output = capsys.readouterr()
+    assert "muse-glimmer pull 1.0" in output.out
+    assert "muse-glimmer serve" in output.out
+    assert not output.err
+    serve.assert_not_called()
+
+
+def test_occupied_port_fails_before_loading_native_runtime(tmp_path, monkeypatch, capsys):
+    from muse_glimmer import runtime
+
+    model = tmp_path / "model.pte"
+    model.touch()
+    native = Mock(side_effect=AssertionError("must not load runtime"))
+    monkeypatch.setattr(runtime, "native_dir", native)
+    with socket.create_server(("127.0.0.1", 0)) as existing:
+        port = existing.getsockname()[1]
+        assert main(["serve", "--model", str(model), "--port", str(port)]) == 1
+        error = capsys.readouterr().err
+        assert f"Address already in use: 127.0.0.1:{port}" in error
+        assert "--port " in error
+        with socket.create_connection(existing.getsockname(), timeout=1):
+            pass
+    native.assert_not_called()
+
+
+def test_startup_failure_releases_reserved_port(tmp_path, monkeypatch):
+    from muse_glimmer import runtime
+
+    with socket.create_server(("127.0.0.1", 0)) as listener:
+        port = listener.getsockname()[1]
+    monkeypatch.setattr(runtime, "native_dir", lambda: tmp_path / "missing-runtime")
+    with pytest.raises(ValueError, match="Native runtime missing"):
+        runtime.serve(tmp_path / "model.pte", load_settings({"port": port}))
+    with socket.create_server(("127.0.0.1", port)):
+        pass
 
 
 def test_config_file_requires_explicit_selection(tmp_path, monkeypatch):

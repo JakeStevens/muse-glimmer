@@ -17,7 +17,7 @@ from platformdirs import user_data_path
 
 from .config import Settings
 from .launch import _stop_server, _terminate
-from .runtime import MODEL_ID, serve
+from .runtime import MODEL_ID, bind_server, serve
 
 WEBUI_PORT = 8080
 STARTUP_TIMEOUT = 300
@@ -107,7 +107,6 @@ def launch_open_webui(model: Path, settings: Settings) -> int:
     data = user_data_path("muse-glimmer", appauthor=False) / "open-webui"
     data.mkdir(parents=True, exist_ok=True, mode=0o700)
     log_path = data / "webui.log"
-    family = socket.AF_INET6 if ":" in settings.host else socket.AF_INET
 
     with (data / ".launch.lock").open("a") as lock:
         try:
@@ -115,8 +114,8 @@ def launch_open_webui(model: Path, settings: Settings) -> int:
         except BlockingIOError:
             raise ValueError("Open WebUI is already running through muse-glimmer.") from None
         # Reserve both ports while the model loads. The WebUI CLI binds its own socket.
-        with socket.create_server(("127.0.0.1", WEBUI_PORT)) as webui_listener:
-            with socket.create_server((settings.host, settings.port), family=family) as listener:
+        with bind_server("127.0.0.1", WEBUI_PORT, fixed_port=True) as webui_listener:
+            with bind_server(settings.host, settings.port) as listener:
                 with log_path.open("w") as log:
                     print(
                         f"Open WebUI: {webui_origin}\nChats: {data}\nWebUI log: {log_path}",

@@ -14,7 +14,7 @@ from pathlib import Path
 import httpx
 
 from .config import Settings
-from .runtime import MODEL_ID, serve
+from .runtime import MODEL_ID, bind_server, serve
 
 STARTUP_TIMEOUT = 300
 
@@ -78,7 +78,7 @@ def launch_agent(model: Path, settings: Settings, name: str) -> int:
         binary = shutil.which(str(Path.home() / ".opencode/bin/opencode"))
     if binary is None:
         install = {
-            "muse": "Install Muse and make sure muse is on PATH.",
+            "muse": "Install from https://dev.meta.ai/products/muse-code and make sure muse is on PATH.",
             "pi": "npm install -g @earendil-works/pi-coding-agent",
             "omp": "Install from https://omp.sh and make sure omp is on PATH.",
             "hermes": "Install from https://hermes-agent.nousresearch.com and make sure hermes is on PATH.",
@@ -90,9 +90,8 @@ def launch_agent(model: Path, settings: Settings, name: str) -> int:
     host = {"0.0.0.0": "127.0.0.1", "::": "::1"}.get(settings.host, settings.host)
     host = f"[{host}]" if ":" in host else host
     origin = f"http://{host}:{settings.port}"
-    family = socket.AF_INET6 if ":" in settings.host else socket.AF_INET
     # Bind before starting the child so an existing server can never be mistaken for ours.
-    with socket.create_server((settings.host, settings.port), family=family) as listener:
+    with bind_server(settings.host, settings.port) as listener:
         with tempfile.TemporaryFile(mode="w+b") as log:
             server = subprocess.Popen(
                 [
@@ -115,7 +114,7 @@ def launch_agent(model: Path, settings: Settings, name: str) -> int:
             old_int = signal.getsignal(signal.SIGINT)
             old_term = signal.signal(signal.SIGTERM, _terminate)
             try:
-                print(f"Starting server at {origin}...", file=sys.stderr, flush=True)
+                print(f"Loading {model.name}; starting server at {origin}...", file=sys.stderr, flush=True)
                 deadline = time.monotonic() + STARTUP_TIMEOUT
                 with httpx.Client(trust_env=False, timeout=0.5) as client:
                     while True:
@@ -231,7 +230,7 @@ def launch_agent(model: Path, settings: Settings, name: str) -> int:
                             local_model,
                             "--offline",
                         ]
-                print(f"Launching {label} using {origin}/v1", file=sys.stderr, flush=True)
+                print(f"Server ready. Launching {label} using {origin}/v1", file=sys.stderr, flush=True)
                 # The agent owns Ctrl+C; keep its server alive for cancelled turns.
                 signal.signal(signal.SIGINT, lambda *_: None)
                 agent = subprocess.Popen(command, env=env)

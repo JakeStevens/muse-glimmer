@@ -361,7 +361,9 @@ def test_deleted_download_has_recovery_hint(hub, catalog, capsys):
     files(hub, "model.pte")
     download.pull("2.0").unlink()
     assert main(["serve"]) == 1
-    assert "Pull again or use --model" in capsys.readouterr().err
+    error = capsys.readouterr().err
+    assert "muse-glimmer pull --list" in error
+    assert "--model /path/to/model.pte" in error
 
 
 def test_snapshot_symlink_is_preserved_for_vision(hub, catalog, tmp_path):
