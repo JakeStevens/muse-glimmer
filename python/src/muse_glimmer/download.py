@@ -194,14 +194,16 @@ def list_models(version: str | None = None) -> None:
                 source = model.variants[name][target]
                 local = _local_export(source)
                 labels = ["recommended"] if name == model.default_variant else []
+                is_selected = False
                 if local is not None:
                     path, required = local
+                    is_selected = selected is not None and _entry_path(path) == _entry_path(selected.path)
                     if any(p.is_file() or p.is_symlink() for p in required):
                         labels.append("downloaded" if all(p.is_file() for p in required) else "incomplete")
-                        if selected and _entry_path(path) == _entry_path(selected.path):
+                        if is_selected:
                             labels.append("selected")
                 print(f"    {name}" + "".join(f" [{label}]" for label in labels))
-                if local is not None and any(p.is_file() or p.is_symlink() for p in local[1]):
+                if local is not None and not is_selected and any(p.is_file() or p.is_symlink() for p in local[1]):
                     print(f"      Location: {local[0].absolute()}")
     if not available:
         print("  No models available for this platform.")
