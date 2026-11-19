@@ -40,13 +40,14 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 import muse_glimmer.runtime
 
-def serve(model, settings, listener=None, *, api_dialect="openai", evict_idle_sessions=False):
+def serve(model, settings, listener=None, *, api_dialect="openai", evict_idle_sessions=False, queue_requests=False):
     root = Path(os.environ["LAUNCH_TEST_ROOT"])
     worker = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
     (root / "server.json").write_text(json.dumps({
         "pid": os.getpid(), "worker": worker.pid,
         "model": str(model), "settings": settings.model_dump(), "api_dialect": api_dialect,
         "evict_idle_sessions": evict_idle_sessions,
+        "queue_requests": queue_requests,
     }))
     mode = os.environ["LAUNCH_TEST_MODE"]
     if mode == "startup-error":
@@ -298,6 +299,7 @@ def test_launch_waits_for_server_and_preserves_exit_code(run_launch, tmp_path, h
         assert server["settings"]["concurrency"] == 2
         assert server["api_dialect"] == ("openrouter" if client == "muse" else "openai")
         assert server["evict_idle_sessions"] is True
+        assert server["queue_requests"] is (client == "omp")
 
 
 @pytest.mark.parametrize(

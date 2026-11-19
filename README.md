@@ -87,7 +87,6 @@ muse-glimmer serve --launch omp
 ```
 
 No API key is needed. Exiting Oh My Pi stops the server.
-For parallel subagents, add `--concurrency 8` (uses more memory).
 
 ## Chat with Open WebUI
 

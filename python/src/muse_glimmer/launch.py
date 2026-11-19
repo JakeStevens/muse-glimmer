@@ -98,7 +98,7 @@ def launch_agent(model: Path, settings: Settings, name: str) -> int:
                     str(model),
                     settings.model_dump_json(),
                     str(listener.fileno()),
-                    "openrouter" if name == "muse" else "openai",
+                    name,
                 ],
                 pass_fds=(listener.fileno(),),
                 start_new_session=True,
@@ -211,7 +211,8 @@ if __name__ == "__main__":
             Path(sys.argv[1]),
             Settings.model_validate_json(sys.argv[2]),
             listener,
-            api_dialect=sys.argv[4],
+            api_dialect="openrouter" if sys.argv[4] == "muse" else "openai",
             # Agents may start new conversations without releasing old sessions.
             evict_idle_sessions=True,
+            queue_requests=sys.argv[4] == "omp",
         )

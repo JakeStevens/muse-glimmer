@@ -1,11 +1,19 @@
+import { streamSimple } from "@oh-my-pi/pi-ai";
+
 export default function (omp) {
   const configuration = process.env.MUSE_GLIMMER_OMP_MODEL;
   if (!configuration) return;
   const { baseUrl, id, contextWindow } = JSON.parse(configuration);
   omp.registerProvider("muse-glimmer", {
     baseUrl,
-    api: "openai-completions",
+    api: "muse-glimmer-openai",
     apiKey: "muse-glimmer",
+    streamSimple(model, context, options) {
+      // Side turns and subagents have their own provider IDs, unlike the UI session.
+      const headers = { ...options?.headers };
+      if (options?.sessionId) headers.session_id = options.sessionId;
+      return streamSimple({ ...model, api: "openai-completions" }, context, { ...options, headers });
+    },
     models: [{
       id,
       name: "Muse Glimmer 30B",
@@ -28,12 +36,5 @@ export default function (omp) {
         maxTokensField: "max_tokens",
       },
     }],
-  });
-
-  // OMP does not send Pi's affinity headers for custom providers. These hooks
-  // are rebound to each subagent, so each conversation gets its own KV session.
-  omp.on("before_provider_request", (event, ctx) => {
-    if (ctx.model?.provider !== "muse-glimmer") return;
-    return { ...event.payload, session_id: ctx.sessionManager.getSessionId() };
   });
 }

@@ -1,12 +1,36 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from socket import socket
+
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .config import Settings
 from .resources import resource_path
 
 MODEL_ID = "muse-glimmer-30B"
+
+
+class QueuedRequests:
+    """Queue OMP's foreground and auxiliary requests across all its workers."""
+
+    def __init__(self, app: ASGIApp, concurrency: int):
+        self.app = app
+        self.slots = asyncio.Semaphore(concurrency)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if (
+            scope["type"] != "http"
+            or scope["method"] != "POST"
+            or scope["path"] != "/v1/chat/completions"
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        # Keep the slot through the response body and upstream worker cleanup.
+        async with self.slots:
+            await self.app(scope, receive, send)
 
 
 def native_dir() -> Path:
@@ -81,6 +105,7 @@ def serve(
     *,
     api_dialect: str = "openai",
     evict_idle_sessions: bool = False,
+    queue_requests: bool = False,
 ) -> None:
     if not (native_dir() / "muse_glimmer_batching_worker").is_file():
         raise ValueError("Native runtime missing. Reinstall muse-glimmer.")
@@ -93,6 +118,8 @@ def serve(
         options.append("--evict-idle-sessions")
     args = serving._parse_args(options)
     app = serving.build_app_from_args(args)
+    if queue_requests:
+        app = QueuedRequests(app, settings.concurrency)
 
     config = uvicorn.Config(app, host=settings.host, port=settings.port, log_level="info")
     uvicorn.Server(config).run(sockets=[listener] if listener is not None else None)
