@@ -98,6 +98,16 @@ muse-glimmer serve --launch hermes
 
 No API key is needed. Exiting Hermes stops the server.
 
+## Run OpenCode with the local model
+
+With [OpenCode 2](https://opencode.ai) installed, run this from your project directory:
+
+```sh
+muse-glimmer serve --launch opencode
+```
+
+No API key is needed. Exiting OpenCode stops the server.
+
 ## Chat with Open WebUI
 
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and [Open WebUI](https://openwebui.com/) once:

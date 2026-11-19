@@ -23,7 +23,7 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--model", help="Local .pte file or directory containing one .pte")
     command.add_argument(
         "--launch",
-        choices=["muse", "pi", "omp", "hermes", "open-webui"],
+        choices=["muse", "pi", "omp", "hermes", "opencode", "open-webui"],
         help="Launch a client using the local server",
     )
     command.add_argument("--host")
@@ -75,7 +75,7 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
             flush=True,
         )
-        if args.launch in {"muse", "pi", "omp", "hermes"}:
+        if args.launch in {"muse", "pi", "omp", "hermes", "opencode"}:
             from .launch import launch_agent
 
             return launch_agent(model, settings, args.launch)

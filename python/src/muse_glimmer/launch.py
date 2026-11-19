@@ -72,14 +72,17 @@ def _register_pi_extension() -> Path:
 
 
 def launch_agent(model: Path, settings: Settings, name: str) -> int:
-    label = {"muse": "Muse", "pi": "Pi", "omp": "Oh My Pi", "hermes": "Hermes Agent"}[name]
+    label = {"muse": "Muse", "pi": "Pi", "omp": "Oh My Pi", "hermes": "Hermes Agent", "opencode": "OpenCode"}[name]
     binary = shutil.which(name) or shutil.which(str(Path.home() / ".local/bin" / name))
+    if binary is None and name == "opencode":
+        binary = shutil.which(str(Path.home() / ".opencode/bin/opencode"))
     if binary is None:
         install = {
             "muse": "Install Muse and make sure muse is on PATH.",
             "pi": "npm install -g @earendil-works/pi-coding-agent",
             "omp": "Install from https://omp.sh and make sure omp is on PATH.",
             "hermes": "Install from https://hermes-agent.nousresearch.com and make sure hermes is on PATH.",
+            "opencode": "Install OpenCode 2 from https://opencode.ai and make sure opencode is on PATH.",
         }[name]
         raise ValueError(f"{label} is not installed. {install}")
     pi_extension = _register_pi_extension() if name == "pi" else None
@@ -161,6 +164,36 @@ def launch_agent(model: Path, settings: Settings, name: str) -> int:
                         "--reasoning",
                         "low",
                     ]
+                elif name == "opencode":
+                    local_model = f"muse-glimmer/{MODEL_ID}#low"
+                    env["OPENCODE_CONFIG_CONTENT"] = json.dumps(
+                        {
+                            "model": local_model,
+                            "providers": {
+                                "muse-glimmer": {
+                                    "name": "Muse Glimmer",
+                                    "package": "@opencode/ai/providers/openai-compatible",
+                                    "settings": {"baseURL": f"{origin}/v1", "apiKey": "muse-glimmer"},
+                                    "models": {
+                                        MODEL_ID: {
+                                            "name": "Muse Glimmer 30B",
+                                            "limit": {"context": settings.context, "output": min(32768, settings.context // 4)},
+                                            "capabilities": {
+                                                "input": ["text"], "output": ["text"], "tools": True,
+                                                "reasoning": {"supported": True, "effort": ["low", "medium", "high"]},
+                                            },
+                                            "compatibility": {"maxTokensField": "max_tokens", "supportsPromptCacheKey": False},
+                                            "settings": {"reasoningEffort": "low"},
+                                        }
+                                    },
+                                }
+                            },
+                            "agents": {"title": {"model": local_model}},
+                            "plugins": [Path(__file__).with_name("opencode").resolve().as_uri()],
+                        }
+                    )
+                    # OpenCode's shared background service does not inherit this environment.
+                    command = [binary, "--standalone"]
                 else:
                     env[f"MUSE_GLIMMER_{name.upper()}_MODEL"] = json.dumps(
                         {
@@ -235,5 +268,5 @@ if __name__ == "__main__":
             api_dialect="openrouter" if sys.argv[4] == "muse" else "openai",
             # Agents may start new conversations without releasing old sessions.
             evict_idle_sessions=True,
-            queue_requests=sys.argv[4] in {"omp", "hermes"},
+            queue_requests=sys.argv[4] in {"omp", "hermes", "opencode"},
         )
