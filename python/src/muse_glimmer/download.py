@@ -121,7 +121,7 @@ def _select_model(files: dict[str, int | None], directory: str) -> str:
     return models[0]
 
 
-def pull(release: str, variant: str | None = None) -> Path:
+def pull(release: str, variant: str | None = None, force: bool = False) -> Path:
     source = _release_source(release, variant)
     repo_id = source.repo_id
     try:
@@ -131,9 +131,9 @@ def pull(release: str, variant: str | None = None) -> Path:
         required = _export_files(filename, files)
 
         print(f"Downloading {source.directory} ({_download_size(required, files)})", flush=True)
-        model = Path(hf_hub_download(repo_id, filename, revision=info.sha))
+        model = Path(hf_hub_download(repo_id, filename, revision=info.sha, force_download=force))
         for companion in required[1:]:
-            hf_hub_download(repo_id, companion, revision=info.sha)
+            hf_hub_download(repo_id, companion, revision=info.sha, force_download=force)
     except (httpx.HTTPError, HubHTTPError) as error:
         raise ValueError(f"Could not download Muse Glimmer {release}: {error}") from error
 

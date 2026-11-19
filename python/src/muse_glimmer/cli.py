@@ -18,6 +18,9 @@ def parser() -> argparse.ArgumentParser:
         "--variant",
         help="Checkpoint folder name; defaults to the release's preferred variant",
     )
+    command.add_argument(
+        "--force", action="store_true", help="Re-download the model even if it is cached"
+    )
     command = commands.add_parser("serve", help="Start the local server")
     command.add_argument("--config", type=Path)
     command.add_argument("--model", help="Local .pte file or directory containing one .pte")
@@ -47,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "pull":
             from .download import pull
 
-            model = pull(args.release, args.variant)
+            model = pull(args.release, args.variant, force=args.force)
             print(f"Default model: {model.parent.name}\nRun muse-glimmer serve to start serving.")
             return 0
 
@@ -90,3 +93,7 @@ def main(argv: list[str] | None = None) -> int:
     except (ValueError, OSError, ImportError) as error:
         print(f"muse-glimmer: {error}", file=sys.stderr)
         return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

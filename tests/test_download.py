@@ -17,7 +17,7 @@ def hub(tmp_path, monkeypatch):
     monkeypatch.setattr(download, "default_model_file", lambda: state)
     snapshot = tmp_path / "cache" / "snapshots" / ("a" * 40)
 
-    def fetch(repo_id, filename, revision):
+    def fetch(repo_id, filename, revision, force_download=False):
         path = snapshot / filename
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"downloaded")
@@ -89,7 +89,10 @@ def test_pull_then_serve_uses_downloaded_model(hub, monkeypatch, capsys, variant
     revision = hub.api.model_info.call_args.kwargs["revision"]
     assert len(revision) == 40 and all(c in "0123456789abcdef" for c in revision)
     hub.fetch.assert_called_once_with(
-        "SocialLocalMobile/Muse-Glimmer-30B-ExecuTorch-PTE", filename, revision=hub.info.sha
+        "SocialLocalMobile/Muse-Glimmer-30B-ExecuTorch-PTE",
+        filename,
+        revision=hub.info.sha,
+        force_download=False,
     )
 
     # A new invocation serves offline, without fetching metadata or downloading.
@@ -153,9 +156,16 @@ def test_release_catalog_selects_variant_and_platform_location(
         f"owner/{repo}", revision=f"{repo}-v2", files_metadata=True
     )
     assert download.default_model().path == hub.snapshot / directory / "model.pte"
-    expected = [call(f"owner/{repo}", f"{directory}/model.pte", revision=hub.info.sha)]
+    expected = [
+        call(f"owner/{repo}", f"{directory}/model.pte", revision=hub.info.sha, force_download=False)
+    ]
     if directory in {"cpu", "vision-metal"}:
-        expected.append(call(f"owner/{repo}", f"{directory}/pos_embed.bin", revision=hub.info.sha))
+        expected.append(
+            call(
+                f"owner/{repo}", f"{directory}/pos_embed.bin",
+                revision=hub.info.sha, force_download=False,
+            )
+        )
     assert hub.fetch.call_args_list == expected
 
 
@@ -215,13 +225,25 @@ def test_invalid_release_variant_lists_folder_names_without_downloading(hub, cap
     assert hub.state.read_text() == "/previous/model.pte\n"
 
 
-def test_selected_nested_export_downloads_only_matching_vision_data(hub, catalog):
+@pytest.mark.parametrize("force", [False, True])
+@pytest.mark.parametrize("entrypoint", ["api", "cli"])
+def test_pull_forces_selected_export_only_when_requested(hub, catalog, force, entrypoint):
     files(hub, "solo/model.pte", "vision/model.pte", "vision/pos_embed.bin", "other.bin")
-    assert main(["pull", "2.0", "--variant", "text-image"]) == 0
+    if entrypoint == "api":
+        if force:
+            model = download.pull("2.0", "text-image", force=True)
+        else:
+            model = download.pull("2.0", "text-image")
+        assert model == hub.snapshot / "vision/model.pte"
+    else:
+        args = ["pull", "2.0", "--variant", "text-image"]
+        if force:
+            args.append("--force")
+        assert main(args) == 0
     assert download.default_model().path == hub.snapshot / "vision/model.pte"
     assert hub.fetch.call_args_list == [
-        call("owner/repo", "vision/model.pte", revision=hub.info.sha),
-        call("owner/repo", "vision/pos_embed.bin", revision=hub.info.sha),
+        call("owner/repo", "vision/model.pte", revision=hub.info.sha, force_download=force),
+        call("owner/repo", "vision/pos_embed.bin", revision=hub.info.sha, force_download=force),
     ]
 
 
@@ -352,7 +374,7 @@ def test_root_and_nested_catalog_paths(hub, catalog, variant):
     model = download.pull("2.0", variant)
     expected = "root.pte" if variant == "text-solo" else "vision/model.pte"
     assert model == hub.snapshot / expected
-    hub.fetch.assert_called_once_with("owner/repo", expected, revision=hub.info.sha)
+    hub.fetch.assert_called_once_with("owner/repo", expected, revision=hub.info.sha, force_download=False)
 
 
 def test_missing_file_sizes_are_not_reported_as_zero(hub, catalog, capsys):
@@ -362,7 +384,7 @@ def test_missing_file_sizes_are_not_reported_as_zero(hub, catalog, capsys):
     ]
     assert main(["pull", "2.0"]) == 0
     assert "Downloading . (size unknown)" in capsys.readouterr().out
-    hub.fetch.assert_called_once_with("owner/repo", "model.pte", revision=hub.info.sha)
+    hub.fetch.assert_called_once_with("owner/repo", "model.pte", revision=hub.info.sha, force_download=False)
 
 
 def test_empty_default_does_not_select_current_directory(hub, monkeypatch, capsys):
