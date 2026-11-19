@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import platform
+import sys
 import tempfile
 from pathlib import Path, PurePosixPath
 
@@ -99,6 +101,22 @@ def list_models(version: str | None = None) -> None:
                 f"Unknown model version {version!r}. Available model versions: {', '.join(sorted(versions))}."
             )
         versions = {version: versions[version]}
+    color = sys.stdout.isatty() and "NO_COLOR" not in os.environ and os.environ.get("TERM") != "dumb"
+
+    def style(text: str, code: str) -> str:
+        return f"\033[{code}m{text}\033[0m" if color else text
+
+    selected = default_model()
+    print(style("SELECTED MODEL", "1;36"))
+    print("==============")
+    if selected is None:
+        print("Artifact: none")
+    else:
+        path = selected.path.absolute()
+        missing = " " + style("[missing]", "33") if not path.is_file() else ""
+        print(f"Artifact: {style(path.name, '1')}{missing}")
+        print(f"Location: {path}")
+    print()
     target = f"{platform.system().lower()}-{platform.machine().lower()}"
     print(f"Available models for {target}:")
     available = False
@@ -111,14 +129,6 @@ def list_models(version: str | None = None) -> None:
                 print(f"    {name}{' [default]' if name == model.default_variant else ''}")
     if not available:
         print("  No models available for this platform.")
-    selected = default_model()
-    print()
-    if selected is None:
-        print("Selected artifact: none")
-    else:
-        path = selected.path.absolute()
-        print(f"Selected artifact: {path.name}{' [missing]' if not path.is_file() else ''}")
-        print(f"Location: {path}")
 
 
 def remove_default_model() -> None:

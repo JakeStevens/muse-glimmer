@@ -520,8 +520,10 @@ def test_list_is_offline_and_can_filter_model_version(hub, tmp_path, monkeypatch
         assert "text [default]" in output.out
         assert "cuda-only" not in output.out
         assert ("vision [default]" in output.out) is (version is None)
-        assert "Selected artifact: model.pte [missing]" in output.out
+        assert output.out.startswith("SELECTED MODEL\n")
+        assert "Artifact: model.pte [missing]" in output.out
         assert "Location: /previous/model.pte" in output.out
+        assert output.out.index("Location:") < output.out.index("Available models")
     hub.api.model_info.assert_not_called()
     hub.fetch.assert_not_called()
     assert hub.state.read_text() == "/previous/model.pte\n"
@@ -533,7 +535,7 @@ def test_list_on_unsupported_platform(hub, catalog, monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "No models available for this platform" in output
     assert "text-solo" not in output
-    assert "Selected artifact: none" in output
+    assert "Artifact: none" in output
     assert not hub.state.exists()
     hub.api.model_info.assert_not_called()
 
