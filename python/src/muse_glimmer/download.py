@@ -15,6 +15,7 @@ from platformdirs import user_data_path
 from pydantic import BaseModel, ConfigDict, TypeAdapter, field_validator
 
 from .resources import resource_path
+from .terminal import print_path
 
 # Hub 2 uses httpx2; Hub 1 uses httpx.
 try:
@@ -179,7 +180,7 @@ def list_models(version: str | None = None) -> None:
         path = selected.path.absolute()
         missing = " " + style("[missing]", "33") if not path.is_file() else ""
         print(f"Artifact: {style(path.name, '1')}{missing}")
-        print(f"Location: {path}")
+        print_path(path)
     print("Selection applies to the next serve; a running server keeps its model.")
     print()
     target = f"{platform.system().lower()}-{platform.machine().lower()}"
@@ -204,7 +205,7 @@ def list_models(version: str | None = None) -> None:
                             labels.append("selected")
                 print(f"    {name}" + "".join(f" [{label}]" for label in labels))
                 if local is not None and not is_selected and any(p.is_file() or p.is_symlink() for p in local[1]):
-                    print(f"      Location: {local[0].absolute()}")
+                    print_path(local[0], prefix="      Location: ")
     if not available:
         print("  No models available for this platform.")
 

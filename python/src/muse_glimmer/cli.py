@@ -119,6 +119,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "pull":
             from .download import list_models, pull, remove_model
+            from .terminal import print_path
 
             if args.list:
                 list_models(args.model_version)
@@ -126,10 +127,12 @@ def main(argv: list[str] | None = None) -> int:
             if args.remove:
                 model = remove_model(args.model_version, args.variant)
                 if model is not None:
-                    print(f"Removed artifact: {model.name}\nLocation: {model.absolute()}")
+                    print(f"Removed artifact: {model.name}")
+                    print_path(model)
                 return 0
             model = pull(args.model_version, args.variant, force=args.force)
-            print(f"Selected artifact: {model.name}\nLocation: {model.absolute()}")
+            print(f"Selected artifact: {model.name}")
+            print_path(model)
             print("Run muse-glimmer serve to start serving.")
             return 0
 
