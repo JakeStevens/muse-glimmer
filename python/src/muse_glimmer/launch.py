@@ -72,14 +72,14 @@ def _register_pi_extension() -> Path:
 
 
 def launch_agent(model: Path, settings: Settings, name: str) -> int:
-    label = {"muse": "Muse", "pi": "Pi"}[name]
+    label = {"muse": "Muse", "pi": "Pi", "omp": "Oh My Pi"}[name]
     binary = shutil.which(name) or shutil.which(str(Path.home() / ".local/bin" / name))
     if binary is None:
-        install = (
-            "npm install -g @earendil-works/pi-coding-agent"
-            if name == "pi"
-            else "Install Muse and make sure muse is on PATH."
-        )
+        install = {
+            "muse": "Install Muse and make sure muse is on PATH.",
+            "pi": "npm install -g @earendil-works/pi-coding-agent",
+            "omp": "Install from https://omp.sh and make sure omp is on PATH.",
+        }[name]
         raise ValueError(f"{label} is not installed. {install}")
     pi_extension = _register_pi_extension() if name == "pi" else None
 
@@ -141,22 +141,42 @@ def launch_agent(model: Path, settings: Settings, name: str) -> int:
                         f"{origin}/v1",
                     ]
                 else:
-                    env["MUSE_GLIMMER_PI_MODEL"] = json.dumps(
+                    env[f"MUSE_GLIMMER_{name.upper()}_MODEL"] = json.dumps(
                         {
                             "baseUrl": f"{origin}/v1",
                             "id": MODEL_ID,
                             "contextWindow": settings.context,
                         }
                     )
-                    command = [
-                        binary,
-                        "--extension",
-                        str(pi_extension),
-                        "--provider",
-                        "muse-glimmer",
-                        "--model",
-                        MODEL_ID,
-                    ]
+                    if name == "pi":
+                        command = [
+                            binary,
+                            "--extension",
+                            str(pi_extension),
+                            "--provider",
+                            "muse-glimmer",
+                            "--model",
+                            MODEL_ID,
+                        ]
+                    else:
+                        # OMP inherits extensions into subagents. Keep its model roles
+                        # and auxiliary inference on the local provider for this run.
+                        env["OMP_SKIP_SETUP"] = "1"
+                        local_model = f"muse-glimmer/{MODEL_ID}"
+                        command = [
+                            binary,
+                            "--extension",
+                            str(Path(__file__).with_name("omp.mjs").resolve()),
+                            "--model",
+                            local_model,
+                            "--smol",
+                            local_model,
+                            "--slow",
+                            local_model,
+                            "--plan",
+                            local_model,
+                            "--offline",
+                        ]
                 print(f"Launching {label} using {origin}/v1", file=sys.stderr, flush=True)
                 # The agent owns Ctrl+C; keep its server alive for cancelled turns.
                 signal.signal(signal.SIGINT, lambda *_: None)

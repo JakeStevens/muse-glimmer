@@ -78,6 +78,17 @@ muse-glimmer serve --launch pi
 
 No API key is needed. Exiting Pi stops the server.
 
+## Run Oh My Pi with the local model
+
+With [Oh My Pi](https://omp.sh) installed, run this from your project directory:
+
+```sh
+muse-glimmer serve --launch omp
+```
+
+No API key is needed. Exiting Oh My Pi stops the server.
+For parallel subagents, add `--concurrency 8` (uses more memory).
+
 ## Chat with Open WebUI
 
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and [Open WebUI](https://openwebui.com/) once:

@@ -89,7 +89,7 @@ root = Path(os.environ["LAUNCH_TEST_ROOT"])
 def interrupt(*args): (root / "interrupted").touch()
 signal.signal(signal.SIGINT, interrupt)
 client = os.environ["LAUNCH_CLIENT"]
-config = json.loads(os.environ["MUSE_GLIMMER_PI_MODEL"]) if client == "pi" else None
+config = json.loads(os.environ[f"MUSE_GLIMMER_{client.upper()}_MODEL"]) if client != "muse" else None
 url = config["baseUrl"] if config else os.environ["OPENROUTER_BASE_URL"]
 with urllib.request.urlopen(url.removesuffix("/v1") + "/health", timeout=2) as response:
     assert response.status == 200
@@ -97,6 +97,7 @@ with urllib.request.urlopen(url.removesuffix("/v1") + "/health", timeout=2) as r
     "pid": os.getpid(), "args": sys.argv[1:], "cwd": os.getcwd(),
     "url": url, "key": os.environ["OPENROUTER_API_KEY"],
     "config": config,
+    "skip_setup": os.environ.get("OMP_SKIP_SETUP"),
 }))
 if os.environ["LAUNCH_TEST_MODE"] == "exit":
     raise SystemExit(7)
@@ -105,6 +106,7 @@ while not (root / "release").exists(): time.sleep(0.02)
     )
     binary.chmod(0o755)
     (tmp_path / "pi").symlink_to(binary)
+    (tmp_path / "omp").symlink_to(binary)
     webui = tmp_path / "open-webui"
     webui.write_text(
         f"#!{sys.executable}\n"
@@ -145,7 +147,7 @@ HTTPServer(("127.0.0.1", int(sys.argv[-1])), Handler).serve_forever()
     muse_config.write_text('{"model":"my-usual-model"}')
     pi_config = tmp_path / "pi-agent"
     pi_config.mkdir()
-    for name in ("settings.json", "models.json"):
+    for name in ("settings.json", "models.json", "config.yml", "models.yml"):
         (pi_config / name).write_text("{}")
     source = str(Path(launch.__file__).parents[1])
 
@@ -208,7 +210,7 @@ HTTPServer(("127.0.0.1", int(sys.argv[-1])), Handler).serve_forever()
                 proc.kill()
                 proc.communicate()
             assert muse_config.read_text() == '{"model":"my-usual-model"}'
-            for name in ("settings.json", "models.json"):
+            for name in ("settings.json", "models.json", "config.yml", "models.yml"):
                 assert (pi_config / name).read_text() == "{}"
             assert env["OPENROUTER_API_KEY"] == "existing-cloud-key"
             state = tmp_path / "server.json"
@@ -231,7 +233,7 @@ HTTPServer(("127.0.0.1", int(sys.argv[-1])), Handler).serve_forever()
 
 
 @pytest.mark.parametrize("host", ["127.0.0.1", "0.0.0.0"])
-@pytest.mark.parametrize("client", ["muse", "pi"])
+@pytest.mark.parametrize("client", ["muse", "pi", "omp"])
 def test_launch_waits_for_server_and_preserves_exit_code(run_launch, tmp_path, host, client):
     with run_launch(host=host, client=client) as (proc, url):
         _, err = proc.communicate(timeout=10)
@@ -256,6 +258,29 @@ def test_launch_waits_for_server_and_preserves_exit_code(run_launch, tmp_path, h
                 "--model",
                 "muse-glimmer-30B",
             ]
+        elif client == "omp":
+            local_model = "muse-glimmer/muse-glimmer-30B"
+            assert muse["key"] == "existing-cloud-key"
+            assert muse["skip_setup"] == "1"
+            assert muse["config"] == {
+                "baseUrl": url,
+                "id": "muse-glimmer-30B",
+                "contextWindow": 4096,
+            }
+            assert muse["args"] == [
+                "--extension",
+                str(Path(launch.__file__).with_name("omp.mjs").resolve()),
+                "--model",
+                local_model,
+                "--smol",
+                local_model,
+                "--slow",
+                local_model,
+                "--plan",
+                local_model,
+                "--offline",
+            ]
+            assert not (tmp_path / "pi-agent/extensions").exists()
         else:
             assert muse["key"] == "muse-glimmer"
             assert muse["args"] == [
@@ -283,16 +308,16 @@ def test_launch_waits_for_server_and_preserves_exit_code(run_launch, tmp_path, h
         ("crash", "Server exited while Muse was running"),
     ],
 )
-@pytest.mark.parametrize("client", ["muse", "pi"])
+@pytest.mark.parametrize("client", ["muse", "pi", "omp"])
 def test_server_failure_cleans_up_processes(run_launch, tmp_path, mode, message, client):
     with run_launch(mode=mode, client=client) as (proc, _):
         _, err = proc.communicate(timeout=10)
         assert proc.returncode == 1
-        assert message.replace("Muse", "Pi" if client == "pi" else "Muse") in err
+        assert message.replace("Muse", {"muse": "Muse", "pi": "Pi", "omp": "Oh My Pi"}[client]) in err
         assert (tmp_path / f"{client}.json").exists() == (mode == "crash")
 
 
-@pytest.mark.parametrize("client", ["muse", "pi"])
+@pytest.mark.parametrize("client", ["muse", "pi", "omp"])
 def test_occupied_port_does_not_launch_or_touch_existing_server(run_launch, tmp_path, client):
     with socket.create_server(("127.0.0.1", 0)) as listener:
         with run_launch(port=listener.getsockname()[1], client=client) as (proc, _):
@@ -305,7 +330,7 @@ def test_occupied_port_does_not_launch_or_touch_existing_server(run_launch, tmp_
 
 
 @pytest.mark.parametrize("sig", [signal.SIGINT, signal.SIGTERM])
-@pytest.mark.parametrize("client", ["muse", "pi"])
+@pytest.mark.parametrize("client", ["muse", "pi", "omp"])
 def test_terminal_signals_and_cleanup(run_launch, tmp_path, sig, client):
     with run_launch(mode="wait", client=client) as (proc, _):
         wait_for(lambda: (tmp_path / f"{client}.json").exists())
@@ -325,6 +350,7 @@ def test_terminal_signals_and_cleanup(run_launch, tmp_path, sig, client):
     [
         ("muse", "Muse is not installed"),
         ("pi", "npm install -g @earendil-works/pi-coding-agent"),
+        ("omp", "Install from https://omp.sh"),
     ],
 )
 def test_missing_agent_fails_before_server_start(monkeypatch, client, message):

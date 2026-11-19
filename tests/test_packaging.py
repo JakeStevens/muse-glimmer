@@ -92,7 +92,8 @@ sys.path.extend(sys.argv[4:])
 from muse_glimmer.config import load_settings
 from muse_glimmer.resources import resource_path
 import muse_glimmer
-assert (Path(muse_glimmer.__file__).parent / 'pi.mjs').read_bytes() == (Path(sys.argv[3]) / 'python/src/muse_glimmer/pi.mjs').read_bytes()
+for extension in ('pi.mjs', 'omp.mjs'):
+    assert (Path(muse_glimmer.__file__).parent / extension).read_bytes() == (Path(sys.argv[3]) / 'python/src/muse_glimmer' / extension).read_bytes()
 assert resource_path('default_config.toml').resolve().is_relative_to(Path(sys.argv[1]))
 assert load_settings({}).port == int(sys.argv[2])
 assert resource_path('models.yaml').resolve().is_relative_to(Path(sys.argv[1]))

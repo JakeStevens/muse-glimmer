@@ -42,7 +42,7 @@ include = ["muse_glimmer*"]
 include-package-data = false
 
 [tool.setuptools.package-data]
-muse_glimmer = ["pi.mjs", "_native/*", "_vendor/**/*.jinja", "_vendor/LICENSE", "_vendor/provenance.json"]
+muse_glimmer = ["pi.mjs", "omp.mjs", "_native/*", "_vendor/**/*.jinja", "_vendor/LICENSE", "_vendor/provenance.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
