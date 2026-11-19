@@ -111,6 +111,14 @@ def list_models(version: str | None = None) -> None:
                 print(f"    {name}{' [default]' if name == model.default_variant else ''}")
     if not available:
         print("  No models available for this platform.")
+    selected = default_model()
+    print()
+    if selected is None:
+        print("Selected artifact: none")
+    else:
+        path = selected.path.absolute()
+        print(f"Selected artifact: {path.name}{' [missing]' if not path.is_file() else ''}")
+        print(f"Location: {path}")
 
 
 def remove_default_model() -> None:

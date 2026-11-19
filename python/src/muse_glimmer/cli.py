@@ -25,7 +25,8 @@ def parser() -> argparse.ArgumentParser:
         "--force", action="store_true", help="Re-download the model even if it is cached"
     )
     actions.add_argument(
-        "--list", action="store_true", help="List available model versions and variants for this platform"
+        "--list", action="store_true",
+        help="Show available model versions, variants, and the selected artifact's location",
     )
     actions.add_argument(
         "--remove", action="store_true", help="Delete the default downloaded model and clear its selection"
@@ -75,7 +76,8 @@ def main(argv: list[str] | None = None) -> int:
                 print("Default downloaded model removed.")
                 return 0
             model = pull(args.model_version, args.variant, force=args.force)
-            print(f"Default model: {model.parent.name}\nRun muse-glimmer serve to start serving.")
+            print(f"Selected artifact: {model.name}\nLocation: {model.absolute()}")
+            print("Run muse-glimmer serve to start serving.")
             return 0
 
         values = {key: value for key, value in vars(args).items() if key in Settings.model_fields}

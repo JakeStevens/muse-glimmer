@@ -77,7 +77,8 @@ def test_pull_then_serve_uses_downloaded_model(hub, monkeypatch, capsys, variant
         args.extend(["--variant", variant])
     assert main(args) == 0
     output = capsys.readouterr().out
-    assert f"Default model: {folder}" in output
+    assert f"Selected artifact: {folder}.pte" in output
+    assert f"Location: {hub.snapshot / filename}" in output
     assert "Run muse-glimmer serve" in output
     assert "SocialLocalMobile" not in output
     model = hub.snapshot / filename
@@ -519,6 +520,8 @@ def test_list_is_offline_and_can_filter_model_version(hub, tmp_path, monkeypatch
         assert "text [default]" in output.out
         assert "cuda-only" not in output.out
         assert ("vision [default]" in output.out) is (version is None)
+        assert "Selected artifact: model.pte [missing]" in output.out
+        assert "Location: /previous/model.pte" in output.out
     hub.api.model_info.assert_not_called()
     hub.fetch.assert_not_called()
     assert hub.state.read_text() == "/previous/model.pte\n"
@@ -530,6 +533,7 @@ def test_list_on_unsupported_platform(hub, catalog, monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "No models available for this platform" in output
     assert "text-solo" not in output
+    assert "Selected artifact: none" in output
     assert not hub.state.exists()
     hub.api.model_info.assert_not_called()
 
