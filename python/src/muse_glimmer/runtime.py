@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import errno
 import socket
-from contextlib import nullcontext
+from contextlib import ExitStack
 from pathlib import Path
 
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -125,7 +125,22 @@ def serve(
     evict_idle_sessions: bool = False,
     queue_requests: bool = False,
 ) -> None:
-    with (bind_server(settings.host, settings.port) if listener is None else nullcontext(listener)) as bound:
+    with ExitStack() as stack:
+        listeners = [listener] if listener is not None else []
+        if listener is None:
+            addresses = socket.getaddrinfo(
+                settings.host or None, settings.port, type=socket.SOCK_STREAM, flags=socket.AI_PASSIVE,
+            )
+            # Match asyncio's hostname resolution, including both localhost loopbacks.
+            for family, _, _, _, address in dict.fromkeys(addresses):
+                host, _ = socket.getnameinfo(address, socket.NI_NUMERICHOST | socket.NI_NUMERICSERV)
+                try:
+                    listeners.append(stack.enter_context(bind_server(host, settings.port)))
+                except OSError as error:
+                    if error.errno not in {errno.EAFNOSUPPORT, errno.EPROTONOSUPPORT}:
+                        raise
+            if not listeners:
+                raise OSError(f"No supported listening addresses for {settings.host!r}")
         if not (native_dir() / "muse_glimmer_batching_worker").is_file():
             raise ValueError("Native runtime missing. Reinstall muse-glimmer.")
         import uvicorn
@@ -141,4 +156,4 @@ def serve(
             app = QueuedRequests(app, settings.concurrency)
 
         config = uvicorn.Config(app, host=settings.host, port=settings.port, log_level="info")
-        uvicorn.Server(config).run(sockets=[bound])
+        uvicorn.Server(config).run(sockets=listeners)

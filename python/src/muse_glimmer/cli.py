@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .config import Settings, load_settings
+from .config import Settings, load_defaults, load_settings
 
 
 def parser() -> argparse.ArgumentParser:
@@ -52,7 +52,17 @@ Run muse-glimmer pull --help or muse-glimmer serve --help for options.""",
         "--remove", action="store_true",
         help="Delete the specified download, or the selected model when no version is given",
     )
-    defaults = load_settings({})
+    # Help must remain usable even when the serving defaults need repair.
+    try:
+        defaults = load_defaults()
+    except (OSError, ValueError):
+        defaults = {}
+
+    def default_value(name: str) -> str:
+        return str(defaults.get(name, "unavailable")).replace("%", "%%")
+
+    dflash = defaults.get("dflash")
+    dflash_mode = "on" if dflash is True else "off" if dflash is False else "unavailable"
     command = commands.add_parser(
         "serve", help="Start the local server",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -75,21 +85,21 @@ by the client on each request.""",
         choices=["muse", "pi", "omp", "hermes", "opencode", "open-webui"],
         help="Launch a client using the local server",
     )
-    command.add_argument("--host", help=f"Listening address (default: {defaults.host})")
-    command.add_argument("--port", type=int, help=f"Listening port (default: {defaults.port})")
-    command.add_argument("--context", type=int, help=f"Tokens per conversation; must fit the model (default: {defaults.context})")
-    command.add_argument("--concurrency", type=int, help=f"Concurrent sessions; higher values use more memory (default: {defaults.concurrency})")
-    command.add_argument("--prefix-cache-entries", type=int, help=f"Cached prompt prefixes; 0 disables caching (default: {defaults.prefix_cache_entries})")
+    command.add_argument("--host", help=f"Listening address (default: {default_value('host')})")
+    command.add_argument("--port", type=int, help=f"Listening port (default: {default_value('port')})")
+    command.add_argument("--context", type=int, help=f"Tokens per conversation; must fit the model (default: {default_value('context')})")
+    command.add_argument("--concurrency", type=int, help=f"Concurrent sessions; higher values use more memory (default: {default_value('concurrency')})")
+    command.add_argument("--prefix-cache-entries", type=int, help=f"Cached prompt prefixes; 0 disables caching (default: {default_value('prefix_cache_entries')})")
     command.add_argument(
         "--prefix-checkpoint-prompt-end",
         choices=["initial", "every"],
-        help=f"Cache the first prompt per session or every turn (default: {defaults.prefix_checkpoint_prompt_end}; requires prefix caching)",
+        help=f"Cache the first prompt per session or every turn (default: {default_value('prefix_checkpoint_prompt_end')}; requires prefix caching)",
     )
     command.add_argument(
         "--dflash", action=argparse.BooleanOptionalAction, default=None,
-        help=f"Speculative decoding; requires a matching model (default: selected model's mode, otherwise {'on' if defaults.dflash else 'off'})",
+        help=f"Speculative decoding; requires a matching model (default: selected model's mode, otherwise {dflash_mode})",
     )
-    command.add_argument("--dflash-n-draft", type=int, help=f"Draft tokens per step; 0 uses the model's maximum (default: {defaults.dflash_n_draft})")
+    command.add_argument("--dflash-n-draft", type=int, help=f"Draft tokens per step; 0 uses the model's maximum (default: {default_value('dflash_n_draft')})")
     return root
 
 

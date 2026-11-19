@@ -19,6 +19,48 @@ def test_no_command_shows_quickstart_without_starting_a_server(monkeypatch, caps
     serve.assert_not_called()
 
 
+@pytest.mark.parametrize("contents", ["port = 0", "port = [", None])
+def test_help_and_model_listing_survive_invalid_defaults(tmp_path, monkeypatch, capsys, contents):
+    from muse_glimmer import config, download
+
+    path = tmp_path / "default_config.toml"
+    if contents is not None:
+        path.write_text(contents)
+    monkeypatch.setattr(config, "resource_path", lambda _: path)
+    listed = Mock()
+    monkeypatch.setattr(download, "list_models", listed)
+    assert main([]) == 0
+    for args in (["--help"], ["--version"], ["pull", "--help"], ["serve", "--help"]):
+        with pytest.raises(SystemExit) as result:
+            main(args)
+        assert result.value.code == 0
+    assert main(["pull", "--list"]) == 0
+    listed.assert_called_once_with(None)
+    assert not capsys.readouterr().err
+
+
+@pytest.mark.parametrize("override", ["cli", "config"])
+def test_valid_override_repairs_invalid_default_before_validation(tmp_path, monkeypatch, override):
+    from muse_glimmer import config, runtime
+
+    path = tmp_path / "default_config.toml"
+    path.write_text(config.resource_path("default_config.toml").read_text().replace("port = 8000", "port = 0"))
+    monkeypatch.setattr(config, "resource_path", lambda _: path)
+    model = tmp_path / "model.pte"
+    model.touch()
+    serve = Mock()
+    monkeypatch.setattr(runtime, "serve", serve)
+    args = ["serve", "--model", str(model)]
+    if override == "cli":
+        args += ["--port", "8001"]
+    else:
+        overrides = tmp_path / "overrides.toml"
+        overrides.write_text("port = 8001")
+        args += ["--config", str(overrides)]
+    assert main(args) == 0
+    assert serve.call_args.args[1].port == 8001
+
+
 def test_occupied_port_fails_before_loading_native_runtime(tmp_path, monkeypatch, capsys):
     from muse_glimmer import runtime
 
@@ -35,6 +77,50 @@ def test_occupied_port_fails_before_loading_native_runtime(tmp_path, monkeypatch
         with socket.create_connection(existing.getsockname(), timeout=1):
             pass
     native.assert_not_called()
+
+
+def test_localhost_reserves_both_loopbacks_and_releases_them_on_failure(tmp_path, monkeypatch):
+    from muse_glimmer import runtime
+
+    try:
+        reservation = socket.create_server(("::1", 0), family=socket.AF_INET6)
+    except OSError:
+        pytest.skip("IPv6 loopback unavailable")
+    with reservation:
+        port = reservation.getsockname()[1]
+
+    def inspect_listeners():
+        for host in ("127.0.0.1", "::1"):
+            with socket.create_connection((host, port), timeout=1):
+                pass
+        return tmp_path / "missing-runtime"
+
+    monkeypatch.setattr(runtime, "native_dir", inspect_listeners)
+    with pytest.raises(ValueError, match="Native runtime missing"):
+        runtime.serve(tmp_path / "model.pte", load_settings({"host": "localhost", "port": port}))
+    for host, family in (("127.0.0.1", socket.AF_INET), ("::1", socket.AF_INET6)):
+        with socket.create_server((host, port), family=family):
+            pass
+
+
+def test_second_bind_failure_releases_first_listener(tmp_path, monkeypatch):
+    from muse_glimmer import runtime
+
+    try:
+        occupied = socket.create_server(("::1", 0), family=socket.AF_INET6)
+    except OSError:
+        pytest.skip("IPv6 loopback unavailable")
+    with occupied:
+        port = occupied.getsockname()[1]
+        addresses = socket.getaddrinfo("localhost", port, type=socket.SOCK_STREAM)
+        monkeypatch.setattr(runtime.socket, "getaddrinfo", lambda *a, **kw: sorted(addresses))
+        native = Mock(side_effect=AssertionError("must not load runtime"))
+        monkeypatch.setattr(runtime, "native_dir", native)
+        with pytest.raises(ValueError, match="Address already in use"):
+            runtime.serve(tmp_path / "model.pte", load_settings({"host": "localhost", "port": port}))
+        with socket.create_server(("127.0.0.1", port)):
+            pass
+        native.assert_not_called()
 
 
 def test_startup_failure_releases_reserved_port(tmp_path, monkeypatch):
