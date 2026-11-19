@@ -13,7 +13,7 @@ MODEL_ID = "muse-glimmer-30B"
 
 
 class QueuedRequests:
-    """Queue OMP's foreground and auxiliary requests across all its workers."""
+    """Queue agent foreground and auxiliary requests across all their workers."""
 
     def __init__(self, app: ASGIApp, concurrency: int):
         self.app = app

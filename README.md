@@ -88,6 +88,16 @@ muse-glimmer serve --launch omp
 
 No API key is needed. Exiting Oh My Pi stops the server.
 
+## Run Hermes Agent with the local model
+
+With [Hermes Agent](https://hermes-agent.nousresearch.com/) installed, run this from your project directory:
+
+```sh
+muse-glimmer serve --launch hermes
+```
+
+No API key is needed. Exiting Hermes stops the server.
+
 ## Chat with Open WebUI
 
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and [Open WebUI](https://openwebui.com/) once:

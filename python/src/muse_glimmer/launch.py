@@ -72,13 +72,14 @@ def _register_pi_extension() -> Path:
 
 
 def launch_agent(model: Path, settings: Settings, name: str) -> int:
-    label = {"muse": "Muse", "pi": "Pi", "omp": "Oh My Pi"}[name]
+    label = {"muse": "Muse", "pi": "Pi", "omp": "Oh My Pi", "hermes": "Hermes Agent"}[name]
     binary = shutil.which(name) or shutil.which(str(Path.home() / ".local/bin" / name))
     if binary is None:
         install = {
             "muse": "Install Muse and make sure muse is on PATH.",
             "pi": "npm install -g @earendil-works/pi-coding-agent",
             "omp": "Install from https://omp.sh and make sure omp is on PATH.",
+            "hermes": "Install from https://hermes-agent.nousresearch.com and make sure hermes is on PATH.",
         }[name]
         raise ValueError(f"{label} is not installed. {install}")
     pi_extension = _register_pi_extension() if name == "pi" else None
@@ -139,6 +140,26 @@ def launch_agent(model: Path, settings: Settings, name: str) -> int:
                         MODEL_ID,
                         "--base-url",
                         f"{origin}/v1",
+                    ]
+                elif name == "hermes":
+                    # Launch-only overrides preserve Hermes's saved provider. Its
+                    # classic CLI supports custom endpoint flags; the TUI does not.
+                    # Hermes's first-run check also requires credentials in the environment.
+                    env.update(OPENAI_API_KEY="muse-glimmer", OPENAI_BASE_URL=f"{origin}/v1")
+                    command = [
+                        binary,
+                        "chat",
+                        "--cli",
+                        "--provider",
+                        "custom",
+                        "--model",
+                        MODEL_ID,
+                        "--base-url",
+                        f"{origin}/v1",
+                        "--api-key",
+                        "muse-glimmer",
+                        "--reasoning",
+                        "low",
                     ]
                 else:
                     env[f"MUSE_GLIMMER_{name.upper()}_MODEL"] = json.dumps(
@@ -214,5 +235,5 @@ if __name__ == "__main__":
             api_dialect="openrouter" if sys.argv[4] == "muse" else "openai",
             # Agents may start new conversations without releasing old sessions.
             evict_idle_sessions=True,
-            queue_requests=sys.argv[4] == "omp",
+            queue_requests=sys.argv[4] in {"omp", "hermes"},
         )
