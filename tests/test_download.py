@@ -4,7 +4,9 @@ import importlib
 from types import SimpleNamespace
 from unittest.mock import Mock, call
 
+import httpx
 import pytest
+from huggingface_hub.errors import HfHubHTTPError
 from muse_glimmer import download, runtime
 from muse_glimmer.cli import main
 
@@ -287,6 +289,28 @@ def test_download_failure_preserves_previous_default(hub, catalog, failure_at, c
     assert main(["pull", "2.0"]) == 1
     assert "connection lost" in capsys.readouterr().err
     assert hub.state.read_text() == "/previous/model.pte\n"
+
+
+@pytest.mark.parametrize("failure_at", ["model", "positions"])
+def test_forced_download_reports_underlying_hub_error(hub, catalog, failure_at, capsys):
+    files(hub, "model.pte", "pos_embed.bin")
+    hub.state.parent.mkdir()
+    hub.state.write_text("/previous/model.pte\n")
+    error = ValueError("Force download failed due to the above error.")
+    error.__cause__ = HfHubHTTPError(
+        "403 Forbidden: access denied",
+        response=httpx.Response(403, request=httpx.Request("HEAD", "https://example.com/model.pte")),
+    )
+    hub.fetch.side_effect = (
+        error if failure_at == "model" else [str(hub.snapshot / "model.pte"), error]
+    )
+
+    assert main(["pull", "2.0", "--force"]) == 1
+    message = capsys.readouterr().err
+    assert "Could not download Muse Glimmer 2.0: 403 Forbidden: access denied" in message
+    assert "above error" not in message
+    assert hub.state.read_text() == "/previous/model.pte\n"
+    assert list(hub.state.parent.iterdir()) == [hub.state]
 
 
 def test_cancelled_pull_preserves_previous_default(hub, catalog):

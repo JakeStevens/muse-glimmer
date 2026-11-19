@@ -136,6 +136,11 @@ def pull(release: str, variant: str | None = None, force: bool = False) -> Path:
             hf_hub_download(repo_id, companion, revision=info.sha, force_download=force)
     except (httpx.HTTPError, HubHTTPError) as error:
         raise ValueError(f"Could not download Muse Glimmer {release}: {error}") from error
+    except ValueError as error:
+        # Hub wraps forced-download metadata failures in a generic ValueError.
+        if not force or error.__cause__ is None:
+            raise
+        raise ValueError(f"Could not download Muse Glimmer {release}: {error.__cause__}") from error
 
     # Keep the snapshot path: resolving its symlink would lose neighboring files.
     destination = default_model_file()
