@@ -11,6 +11,9 @@ on:
 permissions:
   contents: read
 
+env:
+  RELEASE_PLATFORM: darwin-arm64
+
 concurrency:
   group: wheel-${{ github.ref }}
   cancel-in-progress: false
@@ -46,6 +49,7 @@ jobs:
           PY
       - name: Build wheel
         run: |
+          test "$(uname -s)" = Darwin
           test "$(uname -m)" = arm64
           uv pip install build
           python -m build --wheel
@@ -66,6 +70,7 @@ jobs:
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
               summary.write(
                   f"## muse-glimmer {version}\n\n"
+                  f"- Platform: `{os.environ['RELEASE_PLATFORM']}`\n"
                   f"- Commit: `{os.environ['GITHUB_SHA']}`\n"
                   f"- ExecuTorch: `{provenance['revision']}`\n"
                   f"- Wheel: `{wheel.name}`\n"
@@ -79,11 +84,12 @@ jobs:
           subject-path: dist/*.whl
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: muse-glimmer-macos-arm64
+          name: muse-glimmer-${{ env.RELEASE_PLATFORM }}
           path: dist/*.whl
           if-no-files-found: error
 
   test:
+    name: Test darwin-arm64 (Python ${{ matrix.python }})
     needs: build
     runs-on: [self-hosted, macOS, ARM64, "muse-glimmer-${{ github.run_id }}"]
     timeout-minutes: 30
@@ -101,7 +107,7 @@ jobs:
           enable-cache: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: muse-glimmer-macos-arm64
+          name: muse-glimmer-${{ env.RELEASE_PLATFORM }}
           path: dist
       - name: Verify binary-only installation
         run: python packaging/check_wheel.py --install dist/*.whl
@@ -121,7 +127,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
-          name: test-results-${{ matrix.python }}
+          name: test-results-${{ env.RELEASE_PLATFORM }}-${{ matrix.python }}
           path: reports/
           if-no-files-found: warn
 
@@ -150,7 +156,7 @@ jobs:
           enable-cache: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: muse-glimmer-macos-arm64
+          name: muse-glimmer-${{ env.RELEASE_PLATFORM }}
           path: dist
       - name: Verify the tested artifact and its source
         env:
@@ -239,10 +245,16 @@ jobs:
           import os
           from pathlib import Path
           version, repo = os.environ["RELEASE_VERSION"], os.environ["GITHUB_REPOSITORY"]
+          platform, wheel = os.environ["RELEASE_PLATFORM"], os.environ["WHEEL_FILENAME"]
+          download = f"https://github.com/{repo}/releases/download/{os.environ['GITHUB_REF_NAME']}/{wheel}"
           Path("release-notes.md").write_text(
-              "Serve Muse Glimmer locally. Supports macOS 14+ on Apple Silicon, Python 3.11+.\n\n"
+              "Serve Muse Glimmer locally.\n\n"
               "```sh\npip install --pre --upgrade muse-glimmer\n"
               "muse-glimmer pull 1.0\nmuse-glimmer serve\n```\n\n"
+              "### Prebuilt downloads\n\n"
+              "| Platform | Requirements | Download |\n"
+              "| --- | --- | --- |\n"
+              f"| `{platform}` — Apple Silicon, Metal | macOS 14+, Python 3.11+ | [Prebuilt wheel]({download}) |\n\n"
               f"The attached wheel is identical to [PyPI {version}](https://pypi.org/project/muse-glimmer/{version}/). "
               "It includes the native runtime; no source build or Xcode is needed. "
               "Model weights are downloaded separately.\n\n"
@@ -262,5 +274,5 @@ jobs:
               --draft "${prerelease[@]}" --title "$RELEASE_VERSION" --notes-file release-notes.md
           fi
           gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
-            "dist/$WHEEL_FILENAME" dist/SHA256SUMS --clobber
+            "dist/$WHEEL_FILENAME#$RELEASE_PLATFORM prebuilt wheel" dist/SHA256SUMS --clobber
           gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false

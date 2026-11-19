@@ -6,6 +6,19 @@ builds one wheel, runs the full pytest suite and installation checks on Python
 it publishes to PyPI, verifies the published bytes and provenance, and creates
 a GitHub Release with the same wheel, `SHA256SUMS`, and release notes.
 
+## Platform artifacts
+
+The current prebuilt target is **`darwin-arm64`** (Apple Silicon, Metal).
+Its Actions artifact is `muse-glimmer-darwin-arm64`; its wheel uses Python's
+standard `macosx_14_0_arm64` platform tag. Keep that wheel filename intact so pip
+can check compatibility. The wheel includes the compiled runtime and requires
+Python 3.11+, without Xcode or a source build.
+
+GitHub assets are labeled by platform, and release notes provide a download table.
+Add separate build/test targets,
+platform-qualified Actions artifacts, and download rows when supporting more
+platforms. Attach each tested wheel and include its digest in `SHA256SUMS`.
+
 ## Setup
 
 Use an Apple Silicon Mac with Python 3.11+, Git, [GitHub CLI](https://cli.github.com/),
