@@ -118,6 +118,7 @@ import importlib.util
 import shutil
 import subprocess
 import sys
+from importlib.metadata import version
 from pathlib import Path
 from muse_glimmer.config import load_settings
 from muse_glimmer.resources import resource_path
@@ -133,6 +134,7 @@ tokenizer = AutoTokenizer.from_pretrained(resource_path('tokenizer'), local_file
 assert tokenizer.decode(tokenizer.encode('Hello.', add_special_tokens=False)) == 'Hello.'
 worker = subprocess.run([str(native_dir() / 'muse_glimmer_batching_worker'), '--help'], capture_output=True, text=True)
 assert worker.returncode in (0, 1) and 'prefix_checkpoint_prompt_end' in worker.stdout + worker.stderr, worker.stderr
+assert subprocess.check_output(['muse-glimmer', '--version'], text=True).strip() == version('muse-glimmer')
 subprocess.run(['muse-glimmer', 'serve', '--help'], check=True)
 print('Wheel installed and native worker started without source/build tools or PyTorch.')
 """,

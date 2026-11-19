@@ -7,7 +7,7 @@ Publishing, and verifies the published file and provenance.
 ## Setup
 
 Use an Apple Silicon Mac with Python 3.11+, Git, [GitHub CLI](https://cli.github.com/),
-and [Xcode with Metal](../README.md#from-source). Your GitHub account needs
+and [Xcode with Metal](../README.md#quickstart) (see "Install from source"). Your GitHub account needs
 administration access to this repository to register temporary runners.
 
 Authenticate once and enable workflow pushes:
@@ -34,11 +34,14 @@ GitHub's `pypi` environment requires deployment approval. No PyPI API token is n
 
 Run these commands from the repository. Start on an up-to-date `main` branch
 with the intended changes committed. Set `[project].version` in
-[pyproject.toml](../pyproject.toml) to a new, unused version.
+[pyproject.toml](../pyproject.toml) and `__version__` in
+[python/src/muse_glimmer/__init__.py](../python/src/muse_glimmer/__init__.py)
+to the same new, unused version. The wheel checks verify that the CLI agrees
+with the installed package metadata.
 
 ```sh
 release_version=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
-git add pyproject.toml
+git add pyproject.toml python/src/muse_glimmer/__init__.py
 git commit -m "Release ${release_version}"
 git tag -a "v${release_version}" -m "muse-glimmer ${release_version}"
 git push --atomic origin main "v${release_version}"
