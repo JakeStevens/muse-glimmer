@@ -144,6 +144,16 @@ curl --fail-with-body http://127.0.0.1:8000/v1/chat/completions \
 A successful response contains an assistant message in `choices[0].message.content`.
 Requests appear under `demo` in the HUD; change `session_id` for another session.
 
+From a source checkout, test concurrent traffic, tools, parallel child agents, and
+prefix caching against a dedicated server started with `muse-glimmer serve`:
+
+```sh
+python scripts/smoke_test.py
+```
+
+Add `--requests 24` for sustained traffic, `--base-url` for another server,
+or `--output smoke.json` to save results.
+
 ## Configuration
 
 [default_config.toml](default_config.toml) documents all settings. Load overrides with:
