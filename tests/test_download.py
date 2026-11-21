@@ -65,13 +65,13 @@ def catalog(tmp_path, monkeypatch):
     ("variant", "dflash"),
     [(None, True)]
     + [
-        (f"muse-glimmer-k-quant-{quant}-128K-text-{mode}-metal", mode == "dflash")
+        (f"muse-glimmer-k-quant-{quant}-128K-text-{mode}-metal", mode != "solo")
         for quant in ("17G", "dynamic")
-        for mode in ("dflash", "solo")
+        for mode in ("dflash2", "dflash", "solo")
     ],
 )
 def test_pull_then_serve_uses_downloaded_model(hub, monkeypatch, capsys, variant, dflash):
-    folder = variant or "muse-glimmer-k-quant-17G-128K-text-dflash-metal"
+    folder = variant or "muse-glimmer-k-quant-17G-128K-text-dflash2-metal"
     filename = f"{folder}/{folder}.pte"
     files(hub, filename, "other/model.pte", "README.md", "tokenizer.json")
     args = ["pull", "1.0"]

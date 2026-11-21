@@ -4,31 +4,45 @@
 # dflash selects the serving mode automatically after pull.
 # files lists the complete export relative to directory, enabling offline reuse.
 "1.0":
-  default_variant: muse-glimmer-k-quant-17G-128K-text-dflash-metal
+  default_variant: muse-glimmer-k-quant-17G-128K-text-dflash2-metal
   variants:
+    muse-glimmer-k-quant-17G-128K-text-dflash2-metal:
+      darwin-arm64:
+        repo_id: SocialLocalMobile/Muse-Glimmer-30B-ExecuTorch-PTE
+        revision: a909ed87b85de972442b62a46e3d88631c00449d
+        directory: muse-glimmer-k-quant-17G-128K-text-dflash2-metal
+        files: [muse-glimmer-k-quant-17G-128K-text-dflash2-metal.pte]
+        dflash: true
     muse-glimmer-k-quant-17G-128K-text-dflash-metal:
       darwin-arm64:
         repo_id: SocialLocalMobile/Muse-Glimmer-30B-ExecuTorch-PTE
-        revision: 2b3e8ae56d38e4e5901e390a707d6ccf8c9c6d7d
+        revision: a909ed87b85de972442b62a46e3d88631c00449d
         directory: muse-glimmer-k-quant-17G-128K-text-dflash-metal
         files: [muse-glimmer-k-quant-17G-128K-text-dflash-metal.pte]
         dflash: true
     muse-glimmer-k-quant-17G-128K-text-solo-metal:
       darwin-arm64:
         repo_id: SocialLocalMobile/Muse-Glimmer-30B-ExecuTorch-PTE
-        revision: 2b3e8ae56d38e4e5901e390a707d6ccf8c9c6d7d
+        revision: a909ed87b85de972442b62a46e3d88631c00449d
         directory: muse-glimmer-k-quant-17G-128K-text-solo-metal
         files: [muse-glimmer-k-quant-17G-128K-text-solo-metal.pte]
+    muse-glimmer-k-quant-dynamic-128K-text-dflash2-metal:
+      darwin-arm64:
+        repo_id: SocialLocalMobile/Muse-Glimmer-30B-ExecuTorch-PTE
+        revision: a909ed87b85de972442b62a46e3d88631c00449d
+        directory: muse-glimmer-k-quant-dynamic-128K-text-dflash2-metal
+        files: [muse-glimmer-k-quant-dynamic-128K-text-dflash2-metal.pte]
+        dflash: true
     muse-glimmer-k-quant-dynamic-128K-text-dflash-metal:
       darwin-arm64:
         repo_id: SocialLocalMobile/Muse-Glimmer-30B-ExecuTorch-PTE
-        revision: 2b3e8ae56d38e4e5901e390a707d6ccf8c9c6d7d
+        revision: a909ed87b85de972442b62a46e3d88631c00449d
         directory: muse-glimmer-k-quant-dynamic-128K-text-dflash-metal
         files: [muse-glimmer-k-quant-dynamic-128K-text-dflash-metal.pte]
         dflash: true
     muse-glimmer-k-quant-dynamic-128K-text-solo-metal:
       darwin-arm64:
         repo_id: SocialLocalMobile/Muse-Glimmer-30B-ExecuTorch-PTE
-        revision: 2b3e8ae56d38e4e5901e390a707d6ccf8c9c6d7d
+        revision: a909ed87b85de972442b62a46e3d88631c00449d
         directory: muse-glimmer-k-quant-dynamic-128K-text-solo-metal
         files: [muse-glimmer-k-quant-dynamic-128K-text-solo-metal.pte]

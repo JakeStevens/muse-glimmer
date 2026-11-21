@@ -32,4 +32,4 @@ prefix_checkpoint_prompt_end = "every"
 dflash = true
 
 # Draft proposals per step, used only with DFlash. 0 uses the exported maximum.
-dflash_n_draft = 3
+dflash_n_draft = 7

@@ -12,7 +12,8 @@ muse-glimmer pull 1.0
 muse-glimmer serve
 ```
 
-Serves at `http://127.0.0.1:8000` with a live terminal HUD. **Ctrl+C** stops it.
+Uses the 17G DFlash2 model with seven draft proposals. Serves at `http://127.0.0.1:8000`
+with a live terminal HUD. **Ctrl+C** stops it.
 
 <details>
 <summary>Create a Python environment (Conda or uv)</summary>
