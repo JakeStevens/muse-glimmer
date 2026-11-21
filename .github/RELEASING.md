@@ -6,8 +6,8 @@ builds one wheel, runs the full pytest suite and installation checks on Python
 it publishes to PyPI, verifies the published bytes and provenance, and creates
 a GitHub Release with the same wheel, `SHA256SUMS`, and release notes.
 
-ExecuTorch is pinned to a tested commit from its `viable/strict` branch. Normal
-builds use that exact gitlink, without following the branch automatically.
+ExecuTorch is pinned to a tested commit. Normal builds use that exact gitlink,
+without following a branch automatically.
 
 ## Platform artifacts
 
@@ -30,7 +30,7 @@ Use an Apple Silicon Mac running macOS 26.2+ with Python 3.11+, Git,
 and a macOS 26.2+ SDK (see "Install from source"). Your GitHub account needs
 administration access to this repository to register temporary runners.
 
-The smoke test pulls model `1.0` with its recommended variant (currently DFlash).
+The smoke test pulls model `1.0` with its recommended variant (currently DFlash2).
 Allow roughly 20 GB for cached weights and enough free memory to serve the model.
 Downloads reuse the runner user's Hugging Face cache across releases. Each test
 uses an isolated home directory and a dedicated localhost server on a free port;
