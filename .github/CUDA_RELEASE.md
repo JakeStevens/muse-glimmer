@@ -86,6 +86,8 @@ structure; validate the Linux/glibc/driver requirements before filling them in):
 The tag above is illustrative. pip understands OS/architecture/Python tags,
 **not CUDA versions**. Start with one CUDA baseline per Linux architecture;
 two CUDA variants must not produce the same wheel filename or compatibility tag.
+If `auditwheel` emits multiple platform tags, put the full dot-separated tag in
+`wheel_tag`; collection checks it against the expanded `Tag` headers in the wheel.
 
 ## Validation and coordination
 

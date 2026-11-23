@@ -125,6 +125,67 @@ def test_duplicate_platform_tags_are_rejected(release):
         module.plan()
 
 
+@pytest.mark.parametrize("metadata", ["expanded", "compressed", "missing", "extra"])
+def test_linux_compressed_platform_tags(release, metadata):
+    from packaging.tags import parse_tag
+
+    module, artifacts, candidate = release
+    platform = "linux-x86_64-cuda-13_2"
+    tag = "py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64"
+    expanded = sorted(map(str, parse_tag(tag)))
+    path = module.ROOT / ".github/release-platforms.json"
+    entries = json.loads(path.read_text())
+    entries[platform]["wheel_tag"] = tag
+    path.write_text(json.dumps(entries))
+    directory = artifacts / f"muse-glimmer-{platform}"
+    old_wheel = next(directory.glob("*.whl"))
+    with zipfile.ZipFile(old_wheel) as archive:
+        contents = {name: archive.read(name) for name in archive.namelist()}
+    headers = {
+        "expanded": expanded,
+        "compressed": [tag],
+        "missing": expanded[:1],
+        "extra": expanded + ["py3-none-linux_x86_64"],
+    }[metadata]
+    contents["muse_glimmer-1.2.0.dev1.dist-info/WHEEL"] = (
+        "Wheel-Version: 1.0\n" + "".join(f"Tag: {value}\n" for value in headers)
+    )
+    old_wheel.unlink()
+    with zipfile.ZipFile(directory / f"muse_glimmer-1.2.0.dev1-{tag}.whl", "w") as archive:
+        for name, value in contents.items():
+            archive.writestr(name, value)
+    if metadata in {"missing", "extra"}:
+        with pytest.raises(ValueError, match="Wheel tags differ"):
+            module.record(directory, platform)
+    else:
+        module.record(directory, platform)
+        module.collect(artifacts, candidate, False)
+        assert len(module.load_bundle(candidate)["wheels"]) == 2
+
+
+def test_partially_overlapping_platform_tags_are_rejected(release):
+    module, _, _ = release
+    path = module.ROOT / ".github/release-platforms.json"
+    entries = json.loads(path.read_text())
+    entries["linux-other"] = {
+        **entries["linux-x86_64-cuda-13_2"],
+        "wheel_tag": "py3-none-manylinux_2_28_x86_64.manylinux_2_17_x86_64",
+    }
+    path.write_text(json.dumps(entries))
+    with pytest.raises(ValueError, match="Overlapping"):
+        module.plan()
+
+
+@pytest.mark.parametrize("tag", [
+    "py3-none-", "py3-none-linux_x86_64.", "py3-none-linux_x86_64..manylinux2014_x86_64",
+    "py3-none-../outside", "cp313-cp313-linux_x86_64", "py3-none-linux_x86_64\n",
+])
+def test_invalid_wheel_tags_are_rejected(release, tag):
+    module, _, _ = release
+    with pytest.raises(ValueError, match="Invalid wheel tag"):
+        module.wheel_tags(tag)
+
+
 def test_attestation_checks_each_reusable_builder_and_commit(release, monkeypatch):
     module, artifacts, candidate = release
     module.collect(artifacts, candidate, False)

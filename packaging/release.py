@@ -30,6 +30,13 @@ def command(*args: str) -> str:
     return subprocess.check_output(args, text=True).strip()
 
 
+def wheel_tags(tag: str) -> set[str]:
+    """Expand platform tags for our Python/ABI-independent native wheels."""
+    if not re.fullmatch(r"py3-none-[a-z0-9_]+(?:\.[a-z0-9_]+)*", tag):
+        raise ValueError(f"Invalid wheel tag: {tag}")
+    return {f"py3-none-{platform}" for platform in tag.removeprefix("py3-none-").split(".")}
+
+
 def platforms() -> dict:
     entries = json.loads((ROOT / ".github/release-platforms.json").read_text())
     if not entries:
@@ -38,14 +45,14 @@ def platforms() -> dict:
     for name, entry in entries.items():
         if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", name):
             raise ValueError(f"Invalid platform identifier: {name}")
-        tag = entry["wheel_tag"]
-        if not re.fullmatch(r"py3-none-[a-z0-9_]+", tag) or tag in tags:
-            raise ValueError(f"Invalid or duplicate wheel tag: {tag}")
+        expanded = wheel_tags(entry["wheel_tag"])
+        if expanded & tags:
+            raise ValueError(f"Overlapping or duplicate wheel tag: {entry['wheel_tag']}")
         if not entry["runner"] or entry["runner"][0] != "self-hosted":
             raise ValueError(f"Expected self-hosted runner labels for {name}")
         if not re.fullmatch(r"[a-z_]+\.yml", entry["workflow"]):
             raise ValueError(f"Invalid build workflow for {name}")
-        tags.add(tag)
+        tags.update(expanded)
     return entries
 
 
@@ -83,7 +90,9 @@ def inspect_wheel(wheel: Path, platform: str, release: dict) -> dict:
         metadata = Parser().parsestr(one(".dist-info/METADATA"))
         if metadata["Name"] != "muse-glimmer" or metadata["Version"] != release["version"]:
             raise ValueError(f"Package metadata differs from the release: {wheel.name}")
-        if Parser().parsestr(one(".dist-info/WHEEL")).get_all("Tag") != [tag]:
+        headers = Parser().parsestr(one(".dist-info/WHEEL")).get_all("Tag", [])
+        actual_tags = {value for header in headers for value in wheel_tags(header)}
+        if actual_tags != wheel_tags(tag):
             raise ValueError(f"Wheel tags differ from the platform: {wheel.name}")
         provenance = json.loads(one("muse_glimmer/_vendor/provenance.json"))
         if provenance["revision"] != release["executorch"] or "local_changes" in provenance:

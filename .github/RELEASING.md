@@ -40,6 +40,9 @@ Each build uploads an Actions artifact named `muse-glimmer-<platform>` containin
 The current wheel tag is `py3-none-macosx_26_0_arm64`; the native worker and Metal
 library target macOS 26.2, which the CLI checks before serving. Python 3.11+ is
 required. ExecuTorch remains pinned by its exact gitlink, not a moving branch.
+Linux wheels may use compressed platform tags (for example,
+`py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64`). Their expanded tags must
+match the wheel metadata and must not overlap another platform's tags.
 
 Build workflows attest their wheels, including on non-publishing manual runs.
 Verification checks the platform's reusable workflow identity, workflow commit,
@@ -137,6 +140,11 @@ marked as prereleases. PyPI's README comes from the tagged repository README.
 Wait for `Result: success` on the helpers. Each removes its runner registration
 and temporary checkout/build cache. **Ctrl+C on either helper cancels the entire
 shared run.** Registration is temporary, so start helpers again for retries.
+Transient GitHub reads retry with backoff. If status polling remains unavailable,
+the helper keeps its runner online and checks again after 30 seconds; an API
+outage does not cancel active jobs. A permanent monitoring error stops that
+helper without cancelling the shared run; fix authentication/access and restart
+it. An unexpectedly exited runner still cancels the run.
 
 ## Failure and retry
 

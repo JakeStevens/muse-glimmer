@@ -8,20 +8,30 @@ import shutil
 import subprocess
 import tarfile
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
 
-@pytest.mark.parametrize("outcome", ["success", "failure", "poll_error"])
-@pytest.mark.parametrize("host,arch,asset,label", [
-    ("Darwin", "arm64", "osx-arm64", None),
-    ("Linux", "x86_64", "linux-x64", "cuda-13_2"),
-])
-def test_runner_cleanup(tmp_path, monkeypatch, outcome, host, arch, asset, label):
+@pytest.fixture
+def runner_module():
     path = Path(__file__).resolve().parents[1] / "packaging/release_runner.py"
     spec = importlib.util.spec_from_file_location("release_runner", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize("outcome", [
+    "success", "failure", "poll_error", "transient", "interrupt", "runner_exit",
+])
+@pytest.mark.parametrize("host,arch,asset,label", [
+    ("Darwin", "arm64", "osx-arm64", None),
+    ("Linux", "x86_64", "linux-x64", "cuda-13_2"),
+])
+def test_runner_cleanup(tmp_path, monkeypatch, runner_module, outcome, host, arch, asset, label):
+    module = runner_module
     monkeypatch.setattr(module.platform, "system", lambda: host)
     monkeypatch.setattr(module.platform, "machine", lambda: arch)
     monkeypatch.setattr(module.shutil, "which", lambda _: "/usr/bin/tool")
@@ -48,13 +58,20 @@ def test_runner_cleanup(tmp_path, monkeypatch, outcome, host, arch, asset, label
             polls += 1
             if polls > 1 and outcome == "poll_error":
                 raise RuntimeError("Cannot read run status")
+            if polls == 2 and outcome == "interrupt":
+                raise KeyboardInterrupt
+            if polls == 2 and outcome in {"transient", "runner_exit"}:
+                if outcome == "runner_exit":
+                    children[-1].terminate()
+                    children[-1].wait(timeout=5)
+                raise module.TransientAPIError("GitHub is unavailable")
             return {
                 "path": ".github/workflows/wheel.yml",
                 "event": "push",
                 "head_sha": "a" * 40,
                 "html_url": "https://github.com/owner/repo/actions/runs/123",
                 "status": "queued" if polls == 1 else "completed",
-                "conclusion": outcome,
+                "conclusion": "success" if outcome == "transient" else outcome,
             }
         if "/contents/" in endpoint:
             return {"content": base64.b64encode(b"muse-glimmer-${{ github.run_id }}").decode()}
@@ -95,14 +112,72 @@ def test_runner_cleanup(tmp_path, monkeypatch, outcome, host, arch, asset, label
     monkeypatch.setattr(module, "api", api)
     monkeypatch.setattr(module, "command", command)
     monkeypatch.setattr(module.subprocess, "Popen", start)
+    waits = []
+
+    def wait(delay):
+        waits.append(delay)
+        if outcome == "transient":
+            assert children[-1].poll() is None
+            assert not any(endpoint.endswith("/cancel") for endpoint, _ in requests)
+
+    monkeypatch.setattr(module, "time", SimpleNamespace(sleep=wait))
     if outcome == "poll_error":
         with pytest.raises(RuntimeError, match="Cannot read run status"):
             module.run(123, [label] if label else [])
+    elif outcome == "interrupt":
+        with pytest.raises(KeyboardInterrupt):
+            module.run(123, [label] if label else [])
+    elif outcome == "runner_exit":
+        with pytest.raises(RuntimeError, match="Runner exited early"):
+            module.run(123, [label] if label else [])
     else:
-        assert module.run(123, [label] if label else []) == (0 if outcome == "success" else 1)
+        assert module.run(123, [label] if label else []) == (1 if outcome == "failure" else 0)
+    if outcome == "transient":
+        assert waits == [30] and polls == 3
     assert children and all(child.poll() is not None for child in children)
     assert ("repos/owner/repo/actions/runners/42", "DELETE") in requests
     assert (("repos/owner/repo/actions/runs/123/cancel", "POST") in requests) == (
-        outcome == "poll_error"
+        outcome in {"interrupt", "runner_exit"}
     )
     assert not any(p.name.startswith("muse-glimmer-runner-") for p in tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("error", [
+    RuntimeError("gh: Service Unavailable (HTTP 503)"),
+    RuntimeError("gh: Too Many Requests (HTTP 429)"),
+    RuntimeError("error connecting to api.github.com"),
+    subprocess.TimeoutExpired(["gh", "api"], 120),
+])
+def test_github_read_recovers(runner_module, monkeypatch, error):
+    call = Mock(side_effect=[error, '{"status": "queued"}'])
+    sleep = Mock()
+    monkeypatch.setattr(runner_module, "command", call)
+    monkeypatch.setattr(runner_module, "time", SimpleNamespace(sleep=sleep))
+    assert runner_module.api("repos/owner/repo/actions/runs/123") == {"status": "queued"}
+    assert call.call_count == 2
+    sleep.assert_called_once_with(2)
+
+
+@pytest.mark.parametrize("method,status", [
+    ("GET", 401), ("GET", 403), ("GET", 404), ("POST", 503), ("DELETE", 503),
+])
+def test_github_does_not_retry_permanent_errors_or_mutations(runner_module, monkeypatch, method, status):
+    call = Mock(side_effect=RuntimeError(f"gh: request failed (HTTP {status})"))
+    sleep = Mock()
+    monkeypatch.setattr(runner_module, "command", call)
+    monkeypatch.setattr(runner_module, "time", SimpleNamespace(sleep=sleep))
+    with pytest.raises(RuntimeError, match=f"HTTP {status}"):
+        runner_module.api("repos/owner/repo/actions/runs/123", method)
+    assert call.call_count == 1
+    sleep.assert_not_called()
+
+
+def test_github_read_retries_are_bounded(runner_module, monkeypatch):
+    call = Mock(side_effect=RuntimeError("gh: Bad Gateway (HTTP 502)"))
+    sleep = Mock()
+    monkeypatch.setattr(runner_module, "command", call)
+    monkeypatch.setattr(runner_module, "time", SimpleNamespace(sleep=sleep))
+    with pytest.raises(runner_module.TransientAPIError, match="after 5 attempts"):
+        runner_module.api("repos/owner/repo/actions/runs/123")
+    assert call.call_count == 5
+    assert [args[0][0] for args in sleep.call_args_list] == [2, 4, 8, 16]

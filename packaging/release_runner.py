@@ -31,16 +31,42 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def command(*args: str) -> str:
-    result = subprocess.run(args, cwd=ROOT, capture_output=True, text=True, timeout=120)
+class TransientAPIError(RuntimeError):
+    """A GitHub read failed after retries; the runner may still be healthy."""
+
+
+def command(*args: str, timeout: int = 120) -> str:
+    result = subprocess.run(args, cwd=ROOT, capture_output=True, text=True, timeout=timeout)
     if result.returncode:
         raise RuntimeError(result.stderr.strip() or result.stdout.strip())
     return result.stdout
 
 
 def api(path: str, method: str = "GET"):
-    output = command("gh", "api", "--method", method, path)
-    return json.loads(output) if output.strip() else None
+    for attempt in range(5):
+        try:
+            output = command("gh", "api", "--method", method, path, timeout=30)
+        except (RuntimeError, subprocess.TimeoutExpired) as error:
+            # gh includes the HTTP status in its error text. Only retry safe
+            # reads; replaying an ambiguous POST can repeat a mutation.
+            status = re.search(r"\(HTTP (\d{3})\)", str(error))
+            transient = (
+                (int(status[1]) in {408, 429} or 500 <= int(status[1]) < 600)
+                if status else isinstance(error, subprocess.TimeoutExpired) or re.search(
+                    r"error connecting|connection (?:reset|refused)|timeout|timed out|"
+                    r"temporary failure|no such host|unexpected eof|tls handshake|dial tcp",
+                    str(error), re.IGNORECASE,
+                )
+            )
+            if method != "GET" or not transient:
+                raise
+            if attempt == 4:
+                raise TransientAPIError(f"GitHub read failed after 5 attempts: {error}") from error
+            delay = 2 ** (attempt + 1)
+            print(f"GitHub read failed; retrying in {delay}s: {error}", flush=True)
+            time.sleep(delay)
+        else:
+            return json.loads(output) if output.strip() else None
 
 
 def stop(process: subprocess.Popen) -> None:
@@ -100,7 +126,7 @@ def run(run_id: int, labels: list[str] | None = None) -> int:
     name = f"muse-glimmer-{run_id}-{uuid.uuid4().hex[:8]}"
     runner_id = None
     process = None
-    completed = False
+    cancel_run = False
     with tempfile.TemporaryDirectory(prefix="muse-glimmer-runner-") as temporary:
         work = Path(temporary)
         runner = work / "runner"
@@ -196,7 +222,22 @@ def run(run_id: int, labels: list[str] | None = None) -> int:
                 )
                 previous = None
                 while True:
-                    workflow = api(run_path)
+                    if process.poll() is not None:
+                        cancel_run = True
+                        raise RuntimeError(
+                            "Runner exited early:\n" + (work / "runner.log").read_text()[-4000:]
+                        )
+                    try:
+                        workflow = api(run_path)
+                    except TransientAPIError as error:
+                        # A status API outage is not evidence that the job failed.
+                        # Keep serving jobs and try another bounded read after a pause.
+                        print(
+                            f"{error}\nKeeping the runner online; checking again in 30s. "
+                            "Ctrl+C cancels the shared release.", flush=True,
+                        )
+                        time.sleep(30)
+                        continue
                     status = workflow["status"]
                     if status != previous:
                         print(
@@ -207,17 +248,15 @@ def run(run_id: int, labels: list[str] | None = None) -> int:
                         )
                         previous = status
                     if status == "completed":
-                        completed = True
                         print(f"Result: {workflow['conclusion']}", flush=True)
                         return 0 if workflow["conclusion"] == "success" else 1
-                    if process.poll() is not None:
-                        raise RuntimeError(
-                            "Runner exited early:\n" + (work / "runner.log").read_text()[-4000:]
-                        )
                     time.sleep(15)
+        except KeyboardInterrupt:
+            cancel_run = True
+            raise
         finally:
             try:
-                if process is not None and not completed:
+                if process is not None and cancel_run:
                     api(run_path + "/cancel", "POST")
             finally:
                 try:
