@@ -1,0 +1,18 @@
+# CUDA owner: replace this gate with build + installation/full/live tests.
+# See .github/CUDA_RELEASE.md. Absent from release-platforms.json until validated.
+name: Linux CUDA wheel
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  pending-cuda:
+    runs-on: [self-hosted, Linux, X64, cuda-13_2, "muse-glimmer-${{ github.run_id }}"]
+    timeout-minutes: 5
+    steps:
+      - run: |
+          echo '::error::CUDA wheel build and GPU tests are not implemented. See .github/CUDA_RELEASE.md.'
+          exit 1

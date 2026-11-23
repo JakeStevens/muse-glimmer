@@ -13,13 +13,17 @@ import pytest
 
 
 @pytest.mark.parametrize("outcome", ["success", "failure", "poll_error"])
-def test_runner_cleanup(tmp_path, monkeypatch, outcome):
+@pytest.mark.parametrize("host,arch,asset,label", [
+    ("Darwin", "arm64", "osx-arm64", None),
+    ("Linux", "x86_64", "linux-x64", "cuda-13_2"),
+])
+def test_runner_cleanup(tmp_path, monkeypatch, outcome, host, arch, asset, label):
     path = Path(__file__).resolve().parents[1] / "packaging/release_runner.py"
     spec = importlib.util.spec_from_file_location("release_runner", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    monkeypatch.setattr(module.platform, "system", lambda: "Darwin")
-    monkeypatch.setattr(module.platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(module.platform, "system", lambda: host)
+    monkeypatch.setattr(module.platform, "machine", lambda: arch)
     monkeypatch.setattr(module.shutil, "which", lambda _: "/usr/bin/tool")
     monkeypatch.setattr(module.tempfile, "tempdir", str(tmp_path))
 
@@ -59,7 +63,7 @@ def test_runner_cleanup(tmp_path, monkeypatch, outcome):
                 "tag_name": "v1",
                 "assets": [
                     {
-                        "name": "actions-runner-osx-arm64-1.tar.gz",
+                        "name": f"actions-runner-{asset}-1.tar.gz",
                         "digest": "sha256:" + hashlib.sha256(archive.read_bytes()).hexdigest(),
                     }
                 ],
@@ -72,11 +76,12 @@ def test_runner_cleanup(tmp_path, monkeypatch, outcome):
 
     def command(*args):
         if args[0] == "xcrun":
+            assert host == "Darwin"
             return "Metal compiler"
         if args[:3] == ("gh", "repo", "view"):
             return "owner/repo"
         assert args[:3] == ("gh", "release", "download")
-        shutil.copy2(archive, Path(args[-1]) / "actions-runner-osx-arm64-1.tar.gz")
+        shutil.copy2(archive, Path(args[-1]) / f"actions-runner-{asset}-1.tar.gz")
         return ""
 
     children = []
@@ -92,9 +97,9 @@ def test_runner_cleanup(tmp_path, monkeypatch, outcome):
     monkeypatch.setattr(module.subprocess, "Popen", start)
     if outcome == "poll_error":
         with pytest.raises(RuntimeError, match="Cannot read run status"):
-            module.run(123)
+            module.run(123, [label] if label else [])
     else:
-        assert module.run(123) == (0 if outcome == "success" else 1)
+        assert module.run(123, [label] if label else []) == (0 if outcome == "success" else 1)
     assert children and all(child.poll() is not None for child in children)
     assert ("repos/owner/repo/actions/runners/42", "DELETE") in requests
     assert (("repos/owner/repo/actions/runs/123/cancel", "POST") in requests) == (

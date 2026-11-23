@@ -1,42 +1,65 @@
 # Releasing muse-glimmer
 
-Releases run on a temporary GitHub Actions runner on your Mac. The workflow
-builds one wheel, runs the full pytest suite and installation checks on Python
-3.11 and 3.13, and runs a live model smoke test on Python 3.13. After approval,
-it publishes to PyPI, verifies the published bytes and provenance, and creates
-a GitHub Release with the same wheel, `SHA256SUMS`, and release notes.
+One release version and Git tag cover every supported platform. Each platform
+builds and tests on its own machine; the final jobs collect the wheels and
+publish the same bytes to PyPI and GitHub Releases.
 
-ExecuTorch is pinned to a tested commit. Normal builds use that exact gitlink,
-without following a branch automatically.
+## Workflow ownership
 
-## Platform artifacts
+| File | Responsibility |
+| --- | --- |
+| [workflows/wheel.yml](workflows/wheel.yml) | Coordinate platforms, require all tests, collect artifacts, request approval, publish and verify both registries. |
+| [workflows/mac_wheel.yml](workflows/mac_wheel.yml) | Build the Mac wheel, check installation on Python 3.11/3.13, run the full suite and a live Metal smoke test. |
+| [workflows/linux_wheel.yml](workflows/linux_wheel.yml) | Reserved for CUDA builds and GPU tests; currently disabled and deliberately fails if enabled prematurely. |
+| [release-platforms.json](release-platforms.json) | Required platforms, runner labels, wheel tags, build workflow identities, and download-table descriptions. |
+| [../packaging/release.py](../packaging/release.py) | Artifact metadata, complete-set validation, provenance checks, upload retries and release notes. |
 
-The current prebuilt target is **`darwin-arm64`** (Apple Silicon, Metal).
-Its Actions artifact is `muse-glimmer-darwin-arm64`; its wheel uses Python's
-standard `macosx_26_0_arm64` platform tag. pip uses major-only tags for macOS 11+,
-so the CLI checks the **macOS 26.2+** runtime requirement before serving. Both the
-native worker and Metal library are compiled for 26.2. The wheel requires
-Python 3.11+, without Xcode or a source build.
+The CUDA implementation and acceptance checklist are in [CUDA_RELEASE.md](CUDA_RELEASE.md).
+Only `darwin-arm64` is enabled today. Adding a platform makes it mandatory for
+that release; there is no automatic fallback to a partial platform set.
 
-GitHub assets are labeled by platform, and release notes provide a download table.
-Add separate build/test targets,
-platform-qualified Actions artifacts, and download rows when supporting more
-platforms. Attach each tested wheel and include its digest in `SHA256SUMS`.
+`wheel.yml` retains its name because PyPI Trusted Publishing is configured for
+that filename and the `pypi` environment. Platform workflows are reusable
+`workflow_call` workflows, called from the same commit as the coordinator.
+They do not publish independently.
 
-## Setup
+The coordinator currently runs on the Mac, including collection/publication.
+Those operations need Python, `gh`, and network access, but no GPU or native
+toolchain. We do not depend on GitHub-hosted machines. Keep all participating
+runners alive through the published-installation checks.
 
-Use an Apple Silicon Mac running macOS 26.2+ with Python 3.11+, Git,
-[GitHub CLI](https://cli.github.com/), and [Xcode with Metal](../README.md#quickstart)
-and a macOS 26.2+ SDK (see "Install from source"). Your GitHub account needs
-administration access to this repository to register temporary runners.
+## Artifact contract
 
-The smoke test pulls model `1.0` with its recommended variant (currently DFlash2).
-Allow roughly 20 GB for cached weights and enough free memory to serve the model.
-Downloads reuse the runner user's Hugging Face cache across releases. Each test
-uses an isolated home directory and a dedicated localhost server on a free port;
-it does not change your selected model or use an existing server.
+Each build uploads an Actions artifact named `muse-glimmer-<platform>` containing:
 
-Authenticate once and enable workflow pushes:
+- Exactly one standard Python `.whl` file.
+- `release.json`: package version, source commit/ref, ExecuTorch gitlink, platform,
+  wheel filename, size and SHA-256. Generate it with `packaging/release.py record`.
+- `SHA256SUMS` for that wheel.
+
+The current wheel tag is `py3-none-macosx_26_0_arm64`; the native worker and Metal
+library target macOS 26.2, which the CLI checks before serving. Python 3.11+ is
+required. ExecuTorch remains pinned by its exact gitlink, not a moving branch.
+
+Build workflows attest their wheels, including on non-publishing manual runs.
+Verification checks the platform's reusable workflow identity, workflow commit,
+source commit/ref, version, embedded ExecuTorch revision, wheel tag and checksum.
+A Linux artifact never needs to execute on the Mac for collection to succeed.
+
+After **all platform tests pass**, collection rejects missing/extra platforms
+and mixed or altered artifacts. It creates one `release-candidate` Actions
+artifact with every wheel, a combined manifest and `SHA256SUMS`. The publishing
+job consumes only that candidate; it never rebuilds a wheel.
+
+## Runner setup
+
+Use a dedicated build account or machine when possible: jobs execute with the
+runner account's filesystem permissions. Temporary workspaces are not a sandbox.
+
+All machines need Python 3.11+, Git and an authenticated [GitHub CLI](https://cli.github.com/).
+Registration requires repository administration access. The Mac additionally
+needs macOS 26.2+, Xcode/Metal and a macOS 26.2+ SDK. Linux's GPU, driver, CUDA
+and glibc baseline must be established by the CUDA owner before enabling it.
 
 ```sh
 gh auth login
@@ -44,26 +67,42 @@ gh auth refresh --hostname github.com --scopes workflow
 gh auth setup-git
 ```
 
-The [PyPI Trusted Publisher](https://pypi.org/manage/project/muse-glimmer/settings/publishing/)
-is already configured for:
+The runner helper verifies the GitHub runner archive's checksum and registers
+it with a label unique to this workflow run. It supports macOS arm64, Linux
+x86_64 and Linux aarch64. Extra `--label` values declare capabilities; they do
+not install or verify CUDA. Actual GPU validation belongs in the Linux workflow.
 
-| Field | Value |
-| --- | --- |
-| Owner | `mergennachin` |
-| Repository | `muse-glimmer` |
-| Workflow filename | `wheel.yml` |
-| Environment | `pypi` |
+The Mac smoke test pulls model `1.0`'s recommended variant (currently DFlash2).
+Allow roughly 20 GB for cached weights and sufficient memory. Smoke tests reuse
+the machine's Hugging Face cache but isolate selection state and use a free port.
 
-GitHub's `pypi` environment requires deployment approval. No PyPI API token is needed.
+## Run without publishing
 
-## Publish a release
+Push a review branch containing these workflows, then:
 
-Run these commands from the repository. Start on an up-to-date `main` branch
-with the intended changes committed. Set `[project].version` in
-[pyproject.toml](../pyproject.toml) and `__version__` in
-[python/src/muse_glimmer/__init__.py](../python/src/muse_glimmer/__init__.py)
-to the same new, unused version. The wheel checks verify that the CLI agrees
-with the installed package metadata.
+```sh
+gh workflow run wheel.yml --ref YOUR_BRANCH
+gh run list --workflow wheel.yml --branch YOUR_BRANCH
+python packaging/release_runner.py RUN_ID
+```
+
+This runs enabled platform builds, full tests, live smoke tests, attestations,
+and collection. A branch run cannot publish. Once CUDA is enabled, join that
+**same RUN_ID** on the Linux machine, using its capability label:
+
+```sh
+python packaging/release_runner.py RUN_ID --label cuda-13_2
+```
+
+The example CUDA label/platform name is provisional until the CUDA owner
+confirms the toolkit and architecture. See the handoff before enabling it.
+
+## Publish
+
+Start from an up-to-date `main`, with all intended source and workflow changes
+committed. Both machines must build the same tagged commit and pinned submodule.
+Set the same new, unused version in `pyproject.toml` and
+`python/src/muse_glimmer/__init__.py`.
 
 ```sh
 release_version=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
@@ -72,66 +111,51 @@ git commit -m "Release ${release_version}"
 git tag -a "v${release_version}" -m "muse-glimmer ${release_version}"
 git push --atomic origin main "v${release_version}"
 gh run list --workflow wheel.yml --branch "v${release_version}"
-```
-
-Use the run ID from the last command in place of `RUN_ID`:
-
-```sh
 python packaging/release_runner.py RUN_ID
 ```
 
-Keep this command running. It downloads and verifies the GitHub runner, registers
-it for this run, and prints the workflow URL. No machine-specific workflow edits
-are needed.
+Start the Linux runner against that same run when enabled. Jobs can begin as
+machines become available, but publication waits for all of them. A permanently
+missing runner leaves the release queued rather than silently dropping a platform.
 
-When all tests pass, open that URL and choose
-**Review deployments → pypi → Approve and deploy**. Review the commit, wheel name,
-size, and SHA-256 in the build summary before approving.
+When validation succeeds, inspect the artifact summaries, then approve GitHub's
+protected **pypi** deployment. Trusted Publishing remains configured as:
 
-The workflow uploads the tested wheel and its attestation, then downloads it
-from PyPI to check the checksum, installation, and provenance. That downloaded
-wheel becomes the GitHub Release asset; it is never rebuilt for GitHub. `.devN`
-and other prerelease versions are marked as prereleases. The package's PyPI
-page uses the repository README, with links pinned to the release tag.
+| Field | Value |
+| --- | --- |
+| Owner | `mergennachin` |
+| Repository | `muse-glimmer` |
+| Workflow | `wheel.yml` |
+| Environment | `pypi` |
 
-Actions retains pytest reports and the live smoke JSON/server log in the
-`test-results-*` artifacts, including on failure. The smoke test exercises tools,
-parallel child sessions, warm/edited prefixes, streaming/disconnect recovery,
-and concurrent multi-turn isolation. Reversed tool-result order remains an
-explicit skip pending [ExecuTorch #25299](https://github.com/pytorch/executorch/issues/25299).
+No PyPI API token is needed. After upload, each platform downloads its own wheel
+from PyPI, verifies bytes/provenance and tests installation on that platform.
+Only when every platform succeeds does the final job publish a GitHub Release,
+with all wheels, a download table and combined checksums. `.devN` releases are
+marked as prereleases. PyPI's README comes from the tagged repository README.
 
-Wait for `Result: success`. The helper stops and unregisters the runner and
-deletes its temporary checkout, tooling, and build cache. **Ctrl+C cancels the run.**
+Wait for `Result: success` on the helpers. Each removes its runner registration
+and temporary checkout/build cache. **Ctrl+C on either helper cancels the entire
+shared run.** Registration is temporary, so start helpers again for retries.
 
-## Build without publishing
-
-```sh
-gh workflow run wheel.yml --ref main
-gh run list --workflow wheel.yml --event workflow_dispatch --branch main
-python packaging/release_runner.py RUN_ID
-```
-
-Replace `RUN_ID` with the new run's ID. A run on `main` runs the same build,
-full test suite, and live smoke gates without publishing to either registry.
-
-## Retry a failed run
-
-Inspect the failure first:
+## Failure and retry
 
 ```sh
 gh run view RUN_ID --log-failed
-```
-
-For a transient failure with unchanged code:
-
-```sh
 gh run rerun RUN_ID --failed
 python packaging/release_runner.py RUN_ID
 ```
 
-If an upload may have succeeded, check PyPI before retrying. If the release
-contents need to change, use a new version and tag; do not move a published tag
-or replace an existing PyPI file.
+Restart the Linux helper too if it is needed. Successful jobs/artifacts are
+reused by `--failed`; do not mix artifacts from different runs or commits.
+Reports remain in `test-results-<platform>-<python>` Actions artifacts. The live
+smoke covers tools, parallel child sessions, prefix reuse, streaming/disconnect
+recovery and multi-turn isolation. Reversed tool results remain an explicit skip
+pending [ExecuTorch #25299](https://github.com/pytorch/executorch/issues/25299).
 
-GitHub uploads remain a draft until both assets are attached. Retrying completes
-a draft or verifies an already published release's assets without replacing them.
+PyPI cannot atomically publish multiple wheels. A failed upload may leave a
+partial version visible. On retry, we compare every existing file's checksum,
+skip identical files and upload missing ones. Any conflicting bytes stop the
+release; use a new version rather than moving a published tag. GitHub stays a
+draft until all assets are attached. Published GitHub assets are verified on
+retry and never overwritten.

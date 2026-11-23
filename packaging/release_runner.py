@@ -1,9 +1,11 @@
-"""Run one GitHub release on this Mac, then remove the temporary runner.
+"""Join one GitHub release on this machine, then remove the temporary runner.
 
-Requires Python 3.11+, Git, Xcode with Metal, and an authenticated gh CLI.
+Requires Python 3.11+, Git, and an authenticated gh CLI. Mac builds need Xcode
+with Metal. Linux builds need the toolchain/GPU specified by their platform.
 See .github/RELEASING.md for setup, release steps, and retries.
 
     python packaging/release_runner.py RUN_ID
+    python packaging/release_runner.py RUN_ID --label cuda-13_2
 
 Approve the pypi deployment in GitHub when prompted. Ctrl+C cancels the run.
 """
@@ -55,13 +57,24 @@ def stop(process: subprocess.Popen) -> None:
             process.wait()
 
 
-def run(run_id: int) -> int:
-    if platform.system() != "Darwin" or platform.machine() != "arm64":
-        raise RuntimeError("The release runner requires an Apple Silicon Mac.")
-    for tool in ("gh", "git", "xcrun"):
+def run(run_id: int, labels: list[str] | None = None) -> int:
+    host = (platform.system(), platform.machine().lower())
+    archive_platform = {
+        ("Darwin", "arm64"): "osx-arm64",
+        ("Linux", "x86_64"): "linux-x64",
+        ("Linux", "aarch64"): "linux-arm64",
+    }.get(host)
+    if archive_platform is None:
+        raise RuntimeError("The release runner supports Apple Silicon and Linux x86_64/aarch64.")
+    labels = labels or []
+    if any(not re.fullmatch(r"[a-zA-Z0-9_.-]+", label) for label in labels):
+        raise RuntimeError("Runner labels may contain only letters, numbers, dots, underscores and hyphens.")
+    required_tools = ["gh", "git", *(["xcrun"] if host[0] == "Darwin" else [])]
+    for tool in required_tools:
         if not shutil.which(tool):
             raise RuntimeError(f"Missing {tool}; see this script's setup instructions.")
-    command("xcrun", "-sdk", "macosx", "metal", "--version")
+    if host[0] == "Darwin":
+        command("xcrun", "-sdk", "macosx", "metal", "--version")
     repository = command(
         "gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"
     ).strip()
@@ -94,7 +107,7 @@ def run(run_id: int) -> int:
         runner.mkdir()
         try:
             release = api("repos/actions/runner/releases/latest")
-            filename = f"actions-runner-osx-arm64-{release['tag_name'].removeprefix('v')}.tar.gz"
+            filename = f"actions-runner-{archive_platform}-{release['tag_name'].removeprefix('v')}.tar.gz"
             asset = next(a for a in release["assets"] if a["name"] == filename)
             if not re.fullmatch(r"sha256:[0-9a-f]{64}", asset.get("digest") or ""):
                 raise RuntimeError("GitHub did not provide a SHA-256 digest for the runner.")
@@ -122,13 +135,17 @@ def run(run_id: int) -> int:
             # Keep job tooling and native build caches inside the temporary directory.
             env = {
                 key: os.environ[key]
-                for key in ("HOME", "USER", "LOGNAME", "SHELL", "LANG", "TMPDIR", "DEVELOPER_DIR")
+                for key in (
+                    "HOME", "USER", "LOGNAME", "SHELL", "LANG", "TMPDIR", "DEVELOPER_DIR",
+                    "CUDA_HOME", "CUDA_PATH", "CUDACXX",
+                )
                 if key in os.environ
             }
             env.update(
                 PATH=os.pathsep.join(
                     dict.fromkeys(
-                        [str(Path(shutil.which(tool)).parent) for tool in ("gh", "git", "xcrun")]
+                        [str(Path(shutil.which(tool)).parent) for tool in required_tools]
+                        + [str(Path(shutil.which(tool)).parent) for tool in ("nvcc", "nvidia-smi") if shutil.which(tool)]
                         + ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
                     )
                 ),
@@ -150,7 +167,7 @@ def run(run_id: int) -> int:
                         "--name",
                         name,
                         "--labels",
-                        f"muse-glimmer-{run_id}",
+                        ",".join([f"muse-glimmer-{run_id}", *labels]),
                         "--work",
                         "_work",
                         "--disableupdate",
@@ -221,6 +238,7 @@ def main() -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("run_id", type=int, help="GitHub Actions run ID from the release page")
+    parser.add_argument("--label", action="append", default=[], help="Additional runner capability label (repeatable)")
     args = parser.parse_args()
 
     def interrupt(_signum, _frame):
@@ -228,7 +246,7 @@ def main() -> int:
 
     signal.signal(signal.SIGTERM, interrupt)
     try:
-        return run(args.run_id)
+        return run(args.run_id, args.label)
     except KeyboardInterrupt:
         print("Cancelled.")
         return 130

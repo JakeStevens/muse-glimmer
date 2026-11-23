@@ -1,0 +1,9 @@
+{
+  "darwin-arm64": {
+    "runner": ["self-hosted", "macOS", "ARM64"],
+    "workflow": "mac_wheel.yml",
+    "wheel_tag": "py3-none-macosx_26_0_arm64",
+    "description": "Apple Silicon, Metal",
+    "requirements": "macOS 26.2+, Python 3.11+"
+  }
+}
