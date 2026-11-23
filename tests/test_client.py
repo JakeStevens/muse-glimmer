@@ -3,7 +3,7 @@ import pytest
 from muse_glimmer import Glimmer
 
 
-def test_predict_sends_independent_prompts(monkeypatch):
+def test_generate_sends_independent_prompts(monkeypatch):
     requests = []
 
     def post(url, **kwargs):
@@ -15,8 +15,8 @@ def test_predict_sends_independent_prompts(monkeypatch):
 
     monkeypatch.setattr(httpx, "post", post)
     client = Glimmer()
-    assert client.predict("First", system="Be brief.", temperature=0, max_tokens=64) == "Hello!"
-    assert client.predict("Second") == "Hello!"
+    assert client.generate("First", system="Be brief.", temperature=0, max_tokens=64) == "Hello!"
+    assert client.generate("Second") == "Hello!"
     url, kwargs = requests[0]
     assert url == "http://127.0.0.1:8000/v1/chat/completions"
     assert kwargs["json"] == {
@@ -32,6 +32,15 @@ def test_predict_sends_independent_prompts(monkeypatch):
         "model": "muse-glimmer-30B",
         "messages": [{"role": "user", "content": "Second"}],
     }
+
+
+def test_generate_returns_empty_string_for_reasoning_only_reply(monkeypatch):
+    message = {"role": "assistant", "reasoning_content": "Let me think..."}
+    reply = {"choices": [{"message": message, "finish_reason": "length"}]}
+    client = Glimmer()
+    monkeypatch.setattr(client, "chat", lambda messages, **options: reply)
+
+    assert client.generate("Hi", max_tokens=1) == ""
 
 
 def test_chat_preserves_request_options_and_full_response(monkeypatch):
@@ -57,7 +66,7 @@ def test_connection_error_includes_startup_command(monkeypatch):
 
     monkeypatch.setattr(httpx, "post", post)
     with pytest.raises(httpx.ConnectError, match="muse-glimmer serve"):
-        Glimmer().predict("Hello")
+        Glimmer().generate("Hello")
 
 
 def test_request_timing_is_opt_in_and_goes_to_stderr(monkeypatch, capsys):
@@ -67,9 +76,9 @@ def test_request_timing_is_opt_in_and_goes_to_stderr(monkeypatch, capsys):
         json={"choices": [{"message": {"content": "ok"}}]},
     )
     monkeypatch.setattr(httpx, "post", lambda *args, **kwargs: response)
-    assert Glimmer().predict("Hi") == "ok"
+    assert Glimmer().generate("Hi") == "ok"
     assert capsys.readouterr().err == ""
-    assert Glimmer(timings=True).predict("Hi") == "ok"
+    assert Glimmer(timings=True).generate("Hi") == "ok"
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == "server timings unavailable\n"

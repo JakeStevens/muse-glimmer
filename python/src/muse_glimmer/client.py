@@ -26,7 +26,7 @@ class Glimmer:
         self.timeout = timeout
         self.timings = timings
 
-    def predict(
+    def generate(
         self,
         prompt: str,
         *,
@@ -45,7 +45,7 @@ class Glimmer:
         if max_tokens is not None:
             options["max_tokens"] = max_tokens
         completion = self.chat(messages, **options)
-        return completion["choices"][0]["message"]["content"] or ""
+        return completion["choices"][0]["message"].get("content") or ""
 
     def chat(self, messages: list[dict[str, Any]], **options: Any) -> dict[str, Any]:
         """Submit a message history and return the full chat completion as a dict."""
