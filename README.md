@@ -49,6 +49,59 @@ pip install -e .
 
 </details>
 
+## Python client
+
+Save this as `foo.py`. Each `predict` call sends an independent prompt and
+returns the assistant's final text as a string.
+
+```python
+from muse_glimmer import Glimmer
+
+g = Glimmer(timings=True)
+print(g.predict("Suggest a name for a coffee shop on the moon."))
+```
+
+Run the server and script together:
+
+```sh
+muse-glimmer serve foo.py
+```
+
+If a healthy Glimmer server is already listening on the configured host and port,
+the script uses its loaded model and settings and leaves it running. Otherwise,
+the launcher starts a server with your selected settings and stops it when the
+script exits.
+To try the example included in this checkout with your own prompt, run:
+
+```sh
+muse-glimmer serve examples/predict.py -- "Why does the moon have phases?"
+```
+
+With `timings=True`, each successful call prints the server's per-request TTFT,
+prefill tok/s, and decode tok/s to stderr. TTFT
+runs from the validated server handler to the first nonempty worker text. Prefill
+measures newly processed prompt tokens, and decode measures generated tokens
+using the worker's decode time. For programmatic access, `g.chat(messages)["timings"]`
+contains the available `ttft_ms`, `prefill_tok_s`, and `decode_tok_s` values.
+Older servers return token counts only. Restart with the updated server to
+enable these measurements.
+
+For a REPL, keep `muse-glimmer serve` running and open Python in a second terminal.
+Set `system`, `temperature`, or `max_tokens` on a prediction. For a conversation,
+pass the history to `chat`, which returns the full OpenAI-style completion
+dictionary and accepts request options such as `max_tokens` and `tools`.
+
+```python
+messages = [{"role": "user", "content": "Suggest a name for a lunar coffee shop."}]
+reply = g.chat(messages, temperature=0.7)
+messages.append(reply["choices"][0]["message"])
+messages.append({"role": "user", "content": "Give that shop a tagline."})
+print(g.chat(messages)["choices"][0]["message"]["content"])
+```
+
+For a server on another port, use `Glimmer(base_url="http://127.0.0.1:8001/v1")`.
+The default HTTP timeout is 300 seconds. Override it with `Glimmer(timeout=600)`.
+
 ## Coding agents
 
 Install [Muse](https://dev.meta.ai/products/muse-code), [Pi](https://github.com/earendil-works/pi),
@@ -56,10 +109,11 @@ Install [Muse](https://dev.meta.ai/products/muse-code), [Pi](https://github.com/
 or [OpenCode](https://opencode.ai), then launch from your project directory:
 
 ```sh
-muse-glimmer serve --launch muse
+muse-glimmer serve muse
 ```
 
 Replace `muse` with `pi`, `omp`, `hermes`, or `opencode` as needed.
+The original `--launch muse` syntax also works.
 No API key is needed. Exiting the agent stops the server.
 
 <img src="img/muse-code-demo.png" alt="Muse coding agent building a Pomodoro timer with Muse Glimmer" width="600">
