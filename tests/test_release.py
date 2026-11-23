@@ -225,6 +225,11 @@ def test_workflow_requires_all_tests_before_publish():
     assert "needs.mac.result == 'success'" in jobs["collect"]["if"]
     assert "needs.linux.result == 'success'" in jobs["collect"]["if"]
     assert jobs["publish"]["needs"] == "collect"
+    # Explicit status checks allow disabled platform ancestors, but require the
+    # immediate gate to succeed. GitHub otherwise skips publication on tags too.
+    for name, dependency in (("publish", "collect"), ("verify-pypi", "publish"), ("github-release", "verify-pypi")):
+        assert "!cancelled()" in jobs[name]["if"]
+        assert f"needs.{dependency}.result == 'success'" in jobs[name]["if"]
     assert jobs["publish"]["environment"]["name"] == "pypi"
     assert jobs["github-release"]["needs"] == "verify-pypi"
     assert "fromJSON(needs.plan.outputs.build)" in jobs["verify-pypi"]["strategy"]["matrix"]
